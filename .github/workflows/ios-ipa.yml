@@ -1,0 +1,61 @@
+name: Build iPhone app (unsigned IPA)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-iphone-app:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Generate Xcode project
+        working-directory: platforms/ios
+        run: xcodegen generate
+
+      - name: Build for iPhone without signing
+        run: |
+          xcodebuild \
+            -project platforms/ios/MotoGPS.xcodeproj \
+            -scheme MotoGPS \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package IPA for signing on Windows
+        run: |
+          APP="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/MOTO GPS.app"
+          test -d "$APP"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          ditto "$APP" "$RUNNER_TEMP/ipa/Payload/MOTO GPS.app"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$RUNNER_TEMP/ipa/Payload" "$GITHUB_WORKSPACE/MotoGPS-unsigned.ipa"
+          unzip -t "$GITHUB_WORKSPACE/MotoGPS-unsigned.ipa"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: MotoGPS-unsigned-IPA
+          path: MotoGPS-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
