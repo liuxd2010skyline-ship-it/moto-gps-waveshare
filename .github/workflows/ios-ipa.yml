@@ -5,30 +5,73 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   build-iphone-app:
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Block changes to iPhone source until reviewed
+        shell: bash
+        run: |
+          set -euo pipefail
+          # These are the Git tree IDs of the iOS and shared directories in
+          # the source snapshot used for the first successful IPA build.
+          expected_ios=663de4be1bd77c8c728aeb1dd93291b8aef4abc2
+          expected_shared=c0e10df41647eb15be741b2e09026dcd680c2e95
+          actual_ios="$(git rev-parse HEAD:platforms/ios)"
+          actual_shared="$(git rev-parse HEAD:shared)"
+          printf 'Source commit: %s\niOS tree: %s\nShared tree: %s\n' \
+            "$GITHUB_SHA" "$actual_ios" "$actual_shared"
+          if [[ "$actual_ios" != "$expected_ios" || "$actual_shared" != "$expected_shared" ]]; then
+            echo 'iPhone source changed. Review the diff before updating the expected tree IDs.' >&2
+            exit 1
+          fi
+          if [[ -n "$(git status --porcelain -- platforms/ios shared)" ]]; then
+            echo 'The checked-out iPhone source is not clean.' >&2
+            exit 1
+          fi
+
+      - name: Reject external Swift package dependencies
+        shell: bash
+        run: |
+          if grep -Eq '\.package[[:space:]]*\([[:space:]]*url:' platforms/ios/Package.swift; then
+            echo 'An external Swift package was added. Review it before building.' >&2
+            exit 1
+          fi
 
       - name: Show Xcode version
         run: xcodebuild -version
 
-      - name: Install XcodeGen
+      - name: Install verified XcodeGen 2.46.0
+        shell: bash
         run: |
-          if ! command -v xcodegen >/dev/null 2>&1; then
-            brew install xcodegen
-          fi
-          xcodegen --version
+          set -euo pipefail
+          curl -fL --retry 3 \
+            -o "$RUNNER_TEMP/xcodegen.zip" \
+            'https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip'
+          echo "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  $RUNNER_TEMP/xcodegen.zip" \
+            | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/xcodegen/bin/xcodegen" --version
 
       - name: Generate Xcode project
         working-directory: platforms/ios
         run: xcodegen generate
+
+      - name: Initialize CodeQL for Swift and C++
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          languages: swift, c-cpp
+          build-mode: manual
+          queries: security-extended
 
       - name: Build for iPhone without signing
         run: |
@@ -42,20 +85,58 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
-      - name: Package IPA for signing on Windows
+      - name: Scan compiled Swift and C++ code
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          output: ${{ runner.temp }}/codeql-results
+          upload: never
+          upload-database: false
+
+      - name: Stop packaging if CodeQL reports a finding
+        shell: bash
         run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          files = sorted((Path(os.environ['RUNNER_TEMP']) / 'codeql-results').rglob('*.sarif'))
+          if not files:
+              raise SystemExit('CodeQL produced no SARIF report; refusing to package.')
+          findings = []
+          for file in files:
+              report = json.loads(file.read_text(encoding='utf-8'))
+              for run in report.get('runs', []):
+                  for result in run.get('results', []):
+                      findings.append((result.get('ruleId', 'unknown'),
+                                       result.get('message', {}).get('text', '')))
+          print(f'CodeQL reports: {len(files)}; findings: {len(findings)}')
+          for rule, message in findings[:20]:
+              print(f'{rule}: {message[:300]}')
+          if findings:
+              raise SystemExit('Review and resolve CodeQL findings before packaging.')
+          PY
+
+      - name: Package IPA and record its SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
           APP="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/MOTO GPS.app"
           test -d "$APP"
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
           ditto "$APP" "$RUNNER_TEMP/ipa/Payload/MOTO GPS.app"
           ditto -c -k --sequesterRsrc --keepParent \
             "$RUNNER_TEMP/ipa/Payload" "$GITHUB_WORKSPACE/MotoGPS-unsigned.ipa"
-          unzip -t "$GITHUB_WORKSPACE/MotoGPS-unsigned.ipa"
+          unzip -tq "$GITHUB_WORKSPACE/MotoGPS-unsigned.ipa"
+          shasum -a 256 MotoGPS-unsigned.ipa > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
-      - name: Upload IPA
-        uses: actions/upload-artifact@v4
+      - name: Upload checked IPA
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: MotoGPS-unsigned-IPA
-          path: MotoGPS-unsigned.ipa
+          name: MotoGPS-checked-unsigned-IPA
+          path: |
+            MotoGPS-unsigned.ipa
+            SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 7
