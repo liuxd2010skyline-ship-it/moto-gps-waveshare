@@ -22,9 +22,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # These are the Git tree IDs of the iOS and shared directories in
-          # the source snapshot used for the first successful IPA build.
-          expected_ios=f5658715a0f10240c6900fb0492261350682c1c4
+          # These are the reviewed Git tree IDs of the iOS and shared sources.
+          expected_ios=ee1894f938a5fb5619b912d6dd0d6b55ee25c777
           expected_shared=c0e10df41647eb15be741b2e09026dcd680c2e95
           actual_ios="$(git rev-parse HEAD:platforms/ios)"
           actual_shared="$(git rev-parse HEAD:shared)"

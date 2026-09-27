@@ -6,7 +6,7 @@ The iPhone app now uses Baidu Maps iOS SDK 7.2.0 for place suggestions, driving 
 
 This is a **car driving** route with a no-highways preference, not a motorcycle-specific route. The rider must check local road restrictions. Searching and planning require mobile internet. The route preview is a schematic drawn from Baidu route coordinates; nationwide surrounding map downloads are currently unavailable. The bundled Jinan demo map remains available.
 
-The app asks the user to accept Baidu SDK privacy terms and enter their own iOS AK at first launch. The AK stays on the phone. The final installed bundle identifier must match the Baidu console security code: `com.liuxd2010skyline.motogps`.
+The app asks the user to accept Baidu SDK privacy terms and enter their own iOS AK at first launch. The AK stays on the phone. The project bundle identifier is `com.liuxd2010skyline.motogps`, but a sideloading tool may rewrite it. The setup screen shows the actual installed identifier, which must match the Baidu iOS AK security code. If it differs, obtain an iOS AK for that installed identifier.
 
 On Windows, run the fork's **Actions → Build iPhone app (unsigned IPA)** workflow and download the artifact. The resulting IPA is unsigned and still needs a valid Apple signing and installation method. A configuration profile alone cannot sign an unsigned app.
 

@@ -6,6 +6,9 @@ struct BaiduMapSetupView: View {
     @AppStorage(BaiduMapSetup.akKey) private var savedAK = ""
     @State private var draftAK = ""
     @State private var agrees = false
+    private var installedBundleID: String {
+        Bundle.main.bundleIdentifier ?? "无法读取应用标识"
+    }
 
     var body: some View {
         NavigationStack {
@@ -19,9 +22,12 @@ struct BaiduMapSetupView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .accessibilityIdentifier("baidu-ak-input")
-                    Text("AK 只保存在本机，不写入公开仓库。百度控制台中填写的安全码必须与安装后的 App Bundle ID 一致：com.liuxd2010skyline.motogps。")
+                    Text("AK 只保存在本机，不写入公开仓库。百度控制台中填写的安全码必须与安装后的应用标识一致：")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                    Text(installedBundleID)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("installed-bundle-id")
                 }
                 Section("隐私同意") {
                     Text("搜索时，关键词和附近位置会发给百度；规划及偏航重算时，起终点位置会发给百度。导航期间手机定位会更新路线和圆屏指引。")
