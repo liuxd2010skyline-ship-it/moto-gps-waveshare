@@ -474,7 +474,6 @@ struct ContentView: View {
                 statusRow("手机定位", symbol: "location", value: locationStatus,
                           color: model.navigation.hasUsableFix ? .green : .secondary)
                 statusRow("路况", symbol: "car.side", value: trafficStatus, color: .secondary)
-                SurroundingMapStatusRow(store: model.surroundingMap)
             }
             if model.isDemoActive {
                 Section {
