@@ -5,42 +5,20 @@ import CoreLocation
 final class MotoGPSUITests: XCTestCase {
     private var previousLocation: XCUILocation?
 
-    func testLiveShanghaiCitySearchShowsDownloadCoverage() throws {
+    func testFirstLaunchRequiresBaiduSetup() throws {
         let app = XCUIApplication()
+        app.launchArguments = ["-MotoGPS.BaiduPrivacyAccepted.v1", "NO",
+                               "-MotoGPS.BaiduIOSAK.v1", ""]
         app.launch()
-        let maps = app.buttons["map-downloads-button"]
-        XCTAssertTrue(maps.waitForExistence(timeout: 5))
-        if !maps.isHittable { app.swipeUp() }
-        maps.tap()
-        app.buttons["map-download-city"].tap()
-        let search = app.searchFields.firstMatch
-        XCTAssertTrue(search.waitForExistence(timeout: 3))
-        search.tap()
-        search.typeText("上海")
-        let city = app.buttons["map-city-result-310000"]
-        XCTAssertTrue(city.waitForExistence(timeout: 25))
-        city.tap()
-        XCTAssertTrue(app.buttons["map-city-start-download"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["map-city-start-download"].isEnabled)
-        keepScreenshot(of: app, named: "MOTO GPS Shanghai offline coverage")
+        XCTAssertTrue(app.textFields["baidu-ak-input"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["baidu-setup-save"].isEnabled)
     }
 
-    func testMapDownloadsExposeCitySearchAndReturnHome() throws {
+    func testBaiduSettingsCanBeOpenedFromHome() throws {
         let app = XCUIApplication()
-        app.launch()
-        let maps = app.buttons["map-downloads-button"]
-        XCTAssertTrue(maps.waitForExistence(timeout: 5))
-        if !maps.isHittable { app.swipeUp() }
-        maps.tap()
-        XCTAssertTrue(app.descendants(matching: .any)["map-downloads-sheet"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["自动加载周边地图"].exists)
-        keepScreenshot(of: app, named: "MOTO GPS map downloads")
-        app.buttons["map-download-city"].tap()
-        XCTAssertTrue(app.searchFields.firstMatch.waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["添加常用城市"].exists)
-        try tapSystemBack(in: app)
-        app.buttons["map-downloads-done"].tap()
-        XCTAssertTrue(app.textFields["destination-search-field"].waitForExistence(timeout: 3))
+        launchConfigured(app)
+        app.buttons["百度地图配置"].tap()
+        XCTAssertTrue(app.textFields["baidu-ak-input"].waitForExistence(timeout: 3))
     }
 
     override func setUpWithError() throws {
@@ -67,7 +45,7 @@ final class MotoGPSUITests: XCTestCase {
 
     func testDeviceDetailsPreserveDestinationSearch() throws {
         let app = XCUIApplication()
-        app.launch()
+        launchConfigured(app)
 
         let search = app.textFields["destination-search-field"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
@@ -125,8 +103,9 @@ final class MotoGPSUITests: XCTestCase {
     }
 
     func testNearbyDestinationCanBeSelectedAndReturnsToRecentSearches() throws {
+        try requireLiveBaiduAK()
         let app = XCUIApplication()
-        app.launch()
+        launchConfigured(app)
 
         let search = app.textFields["destination-search-field"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
@@ -151,8 +130,9 @@ final class MotoGPSUITests: XCTestCase {
     }
 
     func testSelectedRouteStartsNavigationAndEndsAtHome() throws {
+        try requireLiveBaiduAK()
         let app = XCUIApplication()
-        app.launch()
+        launchConfigured(app)
 
         let search = app.textFields["destination-search-field"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
@@ -195,8 +175,9 @@ final class MotoGPSUITests: XCTestCase {
     }
 
     func testRoutePreviewSwipeRightReturnsToSearch() throws {
+        try requireLiveBaiduAK()
         let app = XCUIApplication()
-        app.launch()
+        launchConfigured(app)
 
         let search = app.textFields["destination-search-field"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
@@ -226,8 +207,9 @@ final class MotoGPSUITests: XCTestCase {
     }
 
     func testRoutePreviewSystemBackReturnsToSearch() throws {
+        try requireLiveBaiduAK()
         let app = XCUIApplication()
-        app.launch()
+        launchConfigured(app)
 
         let search = app.textFields["destination-search-field"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
@@ -249,7 +231,7 @@ final class MotoGPSUITests: XCTestCase {
 
     func testBuiltInNavigationDemoStarts() throws {
         let app = XCUIApplication()
-        app.launch()
+        launchConfigured(app)
 
         let demo = app.buttons["demo-navigation-button"]
         XCTAssertTrue(demo.waitForExistence(timeout: 5))
@@ -264,7 +246,7 @@ final class MotoGPSUITests: XCTestCase {
 
     func testEndingDemoNavigationReturnsToHome() throws {
         let app = XCUIApplication()
-        app.launch()
+        launchConfigured(app)
 
         let demo = app.buttons["demo-navigation-button"]
         XCTAssertTrue(demo.waitForExistence(timeout: 5))
@@ -285,8 +267,9 @@ final class MotoGPSUITests: XCTestCase {
     /// Keeps a real route-preview screenshot in the test result so layout
     /// regressions are reviewable without changing the app's runtime behavior.
     func testRoutePreviewVisualState() throws {
+        try requireLiveBaiduAK()
         let app = XCUIApplication()
-        app.launch()
+        launchConfigured(app)
 
         let search = app.textFields["destination-search-field"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
@@ -301,7 +284,7 @@ final class MotoGPSUITests: XCTestCase {
         let preview = app.descendants(matching: .any)["route-preview-map"]
         XCTAssertTrue(preview.waitForExistence(timeout: 20))
         XCTAssertTrue(app.buttons["route-option-0"].waitForExistence(timeout: 3))
-        sleep(3) // Let MapKit finish its tile and camera transition.
+        sleep(1) // Let the route schematic settle before capturing it.
 
         keepScreenshot(of: app, named: "MOTO GPS route preview — overview")
 
@@ -328,7 +311,7 @@ final class MotoGPSUITests: XCTestCase {
 
         let app = XCUIApplication()
         app.launchArguments = arguments
-        app.launch()
+        launchConfigured(app)
         // XCTest may reset appearance while it launches the application.
         // Apply it to the live scene as well, then capture the rendered result.
         device.appearance = appearance
@@ -368,6 +351,19 @@ final class MotoGPSUITests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    private func launchConfigured(_ app: XCUIApplication) {
+        let ak = ProcessInfo.processInfo.environment["MOTOGPS_UI_BAIDU_AK"] ?? "UI-TEST-NO-NETWORK"
+        app.launchArguments += ["-MotoGPS.BaiduPrivacyAccepted.v1", "YES",
+                                "-MotoGPS.BaiduIOSAK.v1", ak]
+        app.launch()
+    }
+
+    private func requireLiveBaiduAK() throws {
+        guard ProcessInfo.processInfo.environment["MOTOGPS_UI_BAIDU_AK"] != nil else {
+            throw XCTSkip("Live Baidu route test requires MOTOGPS_UI_BAIDU_AK")
+        }
     }
 
     private func tapSystemBack(in app: XCUIApplication) throws {

@@ -217,7 +217,7 @@ final class SharedNavigationRuntime {
                       let self
                 else { return }
 
-                // AMap can choose a different route during a refresh. Its
+                // The route provider can choose a different route during a refresh. Its
                 // traffic offsets are unsafe for the currently displayed route
                 // unless the complete GCJ-02 polyline still matches exactly.
                 guard self.activeRoute?.plan.routeID == baseline.plan.routeID,

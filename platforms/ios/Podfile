@@ -1,0 +1,7 @@
+platform :ios, '17.0'
+
+project 'MotoGPS.xcodeproj'
+
+target 'MotoGPS' do
+  pod 'BaiduMapKit', '= 7.2.0'
+end

@@ -1,7 +1,7 @@
 name: MotoGPS
 
 options:
-  bundleIdPrefix: org.example
+  bundleIdPrefix: com.liuxd2010skyline
   deploymentTarget:
     iOS: "17.0"
   xcodeVersion: "16.0"
@@ -58,7 +58,6 @@ targets:
         UIBackgroundModes:
           - location
           - bluetooth-central
-        MOTOGPSGatewayBaseURL: https://example.invalid/moto-gps/api/
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UIApplicationSceneManifest:
@@ -67,7 +66,7 @@ targets:
       path: App/MotoGPS.entitlements
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.example.motogps
+        PRODUCT_BUNDLE_IDENTIFIER: com.liuxd2010skyline.motogps
         PRODUCT_NAME: MOTO GPS
         MARKETING_VERSION: 0.3.0
         CURRENT_PROJECT_VERSION: 5
@@ -97,7 +96,7 @@ targets:
       - target: MotoGPS
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.example.motogps.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: com.liuxd2010skyline.motogps.uitests
         SWIFT_VERSION: 5.0
         TEST_TARGET_NAME: MotoGPS
         GENERATE_INFOPLIST_FILE: YES
@@ -113,7 +112,7 @@ targets:
       - target: MotoGPS
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.example.motogps.unittests
+        PRODUCT_BUNDLE_IDENTIFIER: com.liuxd2010skyline.motogps.unittests
         SWIFT_VERSION: 5.0
         GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/MOTO GPS.app/MOTO GPS

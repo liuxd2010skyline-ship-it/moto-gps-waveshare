@@ -1,0 +1,227 @@
+import Foundation
+import MotoNavigationCore
+
+enum BaiduNavigationError: LocalizedError {
+    case setupRequired
+    case invalidResult
+
+    var errorDescription: String? {
+        switch self {
+        case .setupRequired: "请在首页“百度地图配置”中同意隐私说明并填写 iOS AK"
+        case .invalidResult: "百度地图没有返回可用路线，请换一个目的地重试"
+        }
+    }
+}
+
+private struct BaiduCoordinate: Decodable {
+    let longitude: Double
+    let latitude: Double
+
+    var gcj02: GCJ02Point { GCJ02Point(longitudeDeg: longitude, latitudeDeg: latitude) }
+    var isValid: Bool {
+        longitude.isFinite && latitude.isFinite &&
+            (-180 ... 180).contains(longitude) && (-90 ... 90).contains(latitude) &&
+            (longitude != 0 || latitude != 0)
+    }
+}
+
+private struct BaiduPlace: Decodable {
+    let id: String
+    let name: String
+    let address: String
+    let city: String
+    let district: String
+    let location: BaiduCoordinate
+}
+
+private struct BaiduStep: Decodable {
+    let offset: Double
+    let road: String
+    let instruction: String
+}
+
+private struct BaiduTraffic: Decodable {
+    let start: Double
+    let end: Double
+    let status: Int
+}
+
+private struct BaiduRoute: Decodable {
+    let distance: Double
+    let duration: Int
+    let points: [BaiduCoordinate]
+    let steps: [BaiduStep]
+    let traffic: [BaiduTraffic]
+}
+
+/// The SDK itself remains on the main thread. Swift navigation code sees only
+/// coordinates and route data, never Baidu SDK objects or a gateway URL.
+@MainActor
+private final class BaiduMapClient {
+    static let shared = BaiduMapClient()
+
+    private func start() throws {
+        guard UserDefaults.standard.bool(forKey: BaiduMapSetup.privacyKey),
+              let ak = UserDefaults.standard.string(forKey: BaiduMapSetup.akKey)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !ak.isEmpty,
+              BaiduMapBridge.shared().start(withAK: ak)
+        else { throw BaiduNavigationError.setupRequired }
+    }
+
+    func places(_ keywords: String, near origin: WGS84Point?) async throws -> [BaiduPlace] {
+        try start()
+        let data: Data = try await withCheckedThrowingContinuation { continuation in
+            BaiduMapBridge.shared().searchPlaces(
+                keywords,
+                nearLatitude: origin?.latitudeDeg ?? 999,
+                nearLongitude: origin?.longitudeDeg ?? 999
+            ) { data, error in
+                if let error { continuation.resume(throwing: error) }
+                else if let data { continuation.resume(returning: data) }
+                else { continuation.resume(throwing: BaiduNavigationError.invalidResult) }
+            }
+        }
+        return try JSONDecoder().decode([BaiduPlace].self, from: data)
+    }
+
+    func routes(_ request: RouteRequest, multiple: Bool) async throws -> [BaiduRoute] {
+        try start()
+        let data: Data = try await withCheckedThrowingContinuation { continuation in
+            BaiduMapBridge.shared().drivingRoutes(
+                fromLatitude: request.origin.latitudeDeg,
+                longitude: request.origin.longitudeDeg,
+                destinationLatitude: request.destination.latitudeDeg,
+                longitude: request.destination.longitudeDeg,
+                destinationUID: request.destinationPOIID,
+                multiple: multiple
+            ) { data, error in
+                if let error { continuation.resume(throwing: error) }
+                else if let data { continuation.resume(returning: data) }
+                else { continuation.resume(throwing: BaiduNavigationError.invalidResult) }
+            }
+        }
+        return try JSONDecoder().decode([BaiduRoute].self, from: data)
+    }
+}
+
+enum BaiduMapSetup {
+    static let privacyKey = "MotoGPS.BaiduPrivacyAccepted.v1"
+    static let akKey = "MotoGPS.BaiduIOSAK.v1"
+}
+
+final class BaiduPlaceProvider: @unchecked Sendable {
+    func search(keywords: String, near origin: WGS84Point? = nil) async throws -> [PlaceSearchResult] {
+        let places = try await BaiduMapClient.shared.places(keywords, near: origin)
+        try Task.checkCancellation()
+        return places.filter { $0.location.isValid }.map { place in
+            let point = ChinaCoordinateTransform.gcj02ToWGS84(place.location.gcj02)
+            return PlaceSearchResult(
+                id: place.id,
+                name: place.name,
+                address: place.address,
+                city: place.city,
+                district: place.district,
+                displayArea: [place.city, place.district].filter { !$0.isEmpty }.joined(separator: " · "),
+                location: point,
+                distanceM: origin.map { Self.distance(from: $0, to: point) }
+            )
+        }
+    }
+
+    private static func distance(from start: WGS84Point, to end: WGS84Point) -> Double {
+        let lat1 = start.latitudeDeg * .pi / 180
+        let lat2 = end.latitudeDeg * .pi / 180
+        let latDelta = lat2 - lat1
+        let lonDelta = (end.longitudeDeg - start.longitudeDeg) * .pi / 180
+        let h = pow(sin(latDelta / 2), 2) + cos(lat1) * cos(lat2) * pow(sin(lonDelta / 2), 2)
+        return 12_742_000 * asin(sqrt(min(1, max(0, h))))
+    }
+}
+
+final class BaiduRouteProvider: NavigationRouteProviding, @unchecked Sendable {
+    func route(for request: RouteRequest) async throws -> RouteEnvelope {
+        guard let first = try await routeOptions(for: request, multiple: false).first else {
+            throw BaiduNavigationError.invalidResult
+        }
+        return RouteEnvelope(requestID: request.requestID, route: first)
+    }
+
+    func routeOptions(for request: RouteRequest) async throws -> [RoutePlan] {
+        try await routeOptions(for: request, multiple: true)
+    }
+
+    private func routeOptions(for request: RouteRequest, multiple: Bool) async throws -> [RoutePlan] {
+        let routes = try await BaiduMapClient.shared.routes(request, multiple: multiple)
+        try Task.checkCancellation()
+        let plans = routes.prefix(3).compactMap { route -> RoutePlan? in
+            guard route.points.count >= 2, route.points.allSatisfy(\.isValid),
+                  route.distance.isFinite, route.distance > 0, route.duration > 0
+            else { return nil }
+            let maneuvers = route.steps.enumerated().compactMap { index, step -> RouteManeuver? in
+                guard step.offset.isFinite, step.offset >= 0, step.offset < route.distance,
+                      !step.instruction.isEmpty
+                else { return nil }
+                return RouteManeuver(
+                    id: UInt32(clamping: index + 1),
+                    type: Self.maneuverType(step.instruction),
+                    routeOffsetM: step.offset,
+                    roadName: step.road,
+                    instruction: step.instruction
+                )
+            }
+            let finalManeuvers = maneuvers + [RouteManeuver(
+                id: UInt32(clamping: route.steps.count + 1),
+                type: .arrive,
+                routeOffsetM: route.distance,
+                roadName: "目的地",
+                instruction: "到达目的地"
+            )]
+            let traffic = route.traffic.compactMap { segment -> TrafficSegment? in
+                guard segment.start.isFinite, segment.end.isFinite,
+                      segment.start >= 0, segment.end > segment.start,
+                      segment.start < route.distance
+                else { return nil }
+                return TrafficSegment(
+                    startOffsetM: segment.start,
+                    endOffsetM: min(segment.end, route.distance),
+                    level: Self.trafficLevel(segment.status)
+                )
+            }
+            return RoutePlan(
+                routeID: request.previousRouteID.flatMap { !request.isReroute ? $0 : nil }
+                    ?? "baidu-\(UUID().uuidString)",
+                provider: "baidu-ios-map-sdk",
+                generatedAtMs: UInt64(Date().timeIntervalSince1970 * 1_000),
+                totalDistanceM: route.distance,
+                totalDurationS: route.duration,
+                polyline: route.points.map(\.gcj02),
+                maneuvers: finalManeuvers,
+                traffic: traffic
+            )
+        }
+        guard !plans.isEmpty else { throw BaiduNavigationError.invalidResult }
+        return plans
+    }
+
+    private static func maneuverType(_ text: String) -> ManeuverType {
+        if text.contains("掉头") || text.contains("调头") { return .uTurnLeft }
+        if text.contains("环岛") { return .roundabout }
+        if text.contains("出口") || text.contains("驶出") { return .exit }
+        if text.contains("靠左") || text.contains("左前") { return .slightLeft }
+        if text.contains("靠右") || text.contains("右前") { return .slightRight }
+        if text.contains("左转") { return .left }
+        if text.contains("右转") { return .right }
+        return .continue
+    }
+
+    private static func trafficLevel(_ status: Int) -> TrafficLevel {
+        switch status {
+        case 1: .freeFlow
+        case 2: .slow
+        case 3: .congested
+        case 4: .severe
+        default: .unknown
+        }
+    }
+}

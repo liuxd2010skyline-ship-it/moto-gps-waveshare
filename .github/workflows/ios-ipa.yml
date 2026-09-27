@@ -23,7 +23,7 @@ jobs:
           set -euo pipefail
           # These are the Git tree IDs of the iOS and shared directories in
           # the source snapshot used for the first successful IPA build.
-          expected_ios=663de4be1bd77c8c728aeb1dd93291b8aef4abc2
+          expected_ios=4f2d6cad7a76a01bddf830f39610f7ce827ee1c5
           expected_shared=c0e10df41647eb15be741b2e09026dcd680c2e95
           actual_ios="$(git rev-parse HEAD:platforms/ios)"
           actual_shared="$(git rev-parse HEAD:shared)"
@@ -66,6 +66,27 @@ jobs:
         working-directory: platforms/ios
         run: xcodegen generate
 
+      - name: Install pinned Baidu iOS SDK
+        working-directory: platforms/ios
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v pod >/dev/null 2>&1; then
+            sudo gem install cocoapods --version 1.16.2 --no-document
+          fi
+          pod install --repo-update
+          # Check the SDK binaries against the reviewed Baidu 7.2.0 archive.
+          # CodeQL checks source code; it cannot analyze proprietary SDK binaries.
+          for entry in \
+            'BaiduMapAPI_Base 72d40fc7f8d8c53cc68b16a4d0939a2cf29380e82775f3b903486bcd3dc88d11' \
+            'BaiduMapAPI_Search be571dfa571bfd2637199e3d5078975d52c89ecc11382b56069b4e65ade8b416' \
+            'BaiduMapAPI_Utils 46e91618627e193484f37cd3b1100d155437a189683bcd3a471a6a4d69845bb0'; do
+            read -r name digest <<< "$entry"
+            binary="$(find Pods/BaiduMapKit -type f -name "$name" -print -quit)"
+            test -n "$binary"
+            echo "$digest  $binary" | shasum -a 256 -c -
+          done
+
       - name: Initialize CodeQL for Swift and C++
         uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
@@ -76,7 +97,7 @@ jobs:
       - name: Build for iPhone without signing
         run: |
           xcodebuild \
-            -project platforms/ios/MotoGPS.xcodeproj \
+            -workspace platforms/ios/MotoGPS.xcworkspace \
             -scheme MotoGPS \
             -configuration Release \
             -sdk iphoneos \

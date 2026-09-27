@@ -26,11 +26,10 @@ final class AppModel: ObservableObject {
     private let bluetooth = ESP32BLECentral()
     private let liveLocation = CoreLocationNavigationSource()
     private let searchLocation = SearchLocationBiasSource()
-    private let liveRouteProvider: AmapGatewayRouteProvider
-    private let placeProvider: AmapGatewayPlaceProvider
+    private let liveRouteProvider: BaiduRouteProvider
+    private let placeProvider: BaiduPlaceProvider
     private let mediaController = AppleMusicRemoteController()
     let surroundingMap: SurroundingMapStore
-    let mapGatewayBaseURL: URL
     private var runtime: SharedNavigationRuntime?
     private var placeSearchTask: Task<Void, Never>?
     private var routePreviewTask: Task<Void, Never>?
@@ -39,11 +38,14 @@ final class AppModel: ObservableObject {
 
     private static let recentPlacesKey = "MotoGPS.RecentPlaces.v1"
 
-    init(gatewayBaseURL: URL = AppConfiguration.gatewayBaseURL) {
-        liveRouteProvider = AmapGatewayRouteProvider(baseURL: gatewayBaseURL)
-        placeProvider = AmapGatewayPlaceProvider(baseURL: gatewayBaseURL)
-        mapGatewayBaseURL = gatewayBaseURL
-        surroundingMap = SurroundingMapStore(baseURL: gatewayBaseURL)
+    init() {
+        liveRouteProvider = BaiduRouteProvider()
+        placeProvider = BaiduPlaceProvider()
+        // Keep the bundled sample scene without calling the old map gateway.
+        surroundingMap = SurroundingMapStore(
+            baseURL: URL(string: "https://example.invalid/")!,
+            loader: { _ in throw URLError(.unsupportedURL) }
+        )
         recentPlaces = Self.loadRecentPlaces()
 
         surroundingMap.onScene = { [weak self] scene in
@@ -137,11 +139,6 @@ final class AppModel: ObservableObject {
         return routePreviewCandidates.first { $0.id == selectedRoutePreviewID }
     }
 
-    var mapDownloadRoute: [GCJ02Point] {
-        if isNavigationActive { return runtime?.activeRoutePolyline ?? [] }
-        return selectedRoutePreview?.route.polyline ?? []
-    }
-
     var hasRoutePreview: Bool {
         !routePreviewCandidates.isEmpty
     }
@@ -171,7 +168,7 @@ final class AppModel: ObservableObject {
         }
         switch navigation.stateName {
         case "acquiring": return "请保持精确定位开启"
-        case "planning": return "正在读取高德实时路线与路况"
+        case "planning": return "正在读取百度驾车路线"
         case "navigating": return deviceReady ? "手机可以锁屏并放入口袋" : "手机继续导航，圆屏连接后自动同步"
         case "rerouting": return "新路线生成后会自动同步到圆屏"
         case "arrived": return "本次导航已经完成"
@@ -448,7 +445,7 @@ final class AppModel: ObservableObject {
                     RoutePreviewCandidate(ordinal: $0.offset, route: $0.element)
                 }
                 guard let first = candidates.first else {
-                    self.failRoutePreview("高德没有返回可用路线，请稍后重试")
+                    self.failRoutePreview("百度没有返回可用路线，请稍后重试")
                     return
                 }
                 self.routePreviewCandidates = candidates
@@ -460,7 +457,7 @@ final class AppModel: ObservableObject {
                 return
             } catch {
                 guard let self, !Task.isCancelled else { return }
-                self.failRoutePreview("路线规划失败，请检查网络后重试")
+                self.failRoutePreview(error.localizedDescription)
             }
         }
     }
@@ -530,7 +527,7 @@ final class AppModel: ObservableObject {
                 guard let self, !Task.isCancelled else { return }
                 self.placeResults = []
                 self.isSearchingPlaces = false
-                self.placeSearchFailure = "地点搜索失败，请检查网络后重试"
+                self.placeSearchFailure = error.localizedDescription
             }
         }
     }
