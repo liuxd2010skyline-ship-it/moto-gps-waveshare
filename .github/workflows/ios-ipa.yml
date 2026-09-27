@@ -159,7 +159,7 @@ jobs:
                           reviewed.append(line)
                       else:
                           findings.append((rule, uri, line, message))
-          if reviewed and Counter(reviewed) != Counter(readonly_query_lines):
+          if reviewed and Counter(reviewed) != Counter(readonly_query_lines.keys()):
               raise SystemExit(f'Unexpected read-only query findings: {reviewed}')
           print(f'CodeQL reports: {len(files)}; reviewed read-only query findings: '
                 f'{len(reviewed)}; blocking findings: {len(findings)}')
