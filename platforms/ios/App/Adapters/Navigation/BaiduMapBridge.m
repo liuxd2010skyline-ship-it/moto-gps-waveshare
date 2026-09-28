@@ -10,6 +10,20 @@ static NSError *BaiduError(NSString *message, NSInteger code) {
                           userInfo:@{NSLocalizedDescriptionKey: message}];
 }
 
+static NSString *BaiduAuthorizationDescription(NSInteger code) {
+    switch (code) {
+        case E_PERMISSIONCHECK_CONNECT_ERROR: return @"连接百度鉴权服务器失败，请检查手机网络";
+        case E_PERMISSIONCHECK_DATA_ERROR: return @"百度鉴权服务器返回异常数据，请稍后重试";
+        case E_PERMISSIONCHECK_KEY_ERROR: return @"AK 不存在，请核对百度控制台中的 AK";
+        case E_PERMISSIONCHECK_MCODE_ERROR: return @"安全码与安装后的应用标识不一致";
+        case E_PERMISSIONCHECK_UID_KEY_ERROR: return @"找不到该 AK 对应的应用";
+        case E_PERMISSIONCHECK_KEY_FORBIDEN: return @"应用已在百度控制台被禁用";
+        case E_PERMISSIONCHECK_KEY_DENY_BY_SERVER: return @"应用已被百度平台删除";
+        case E_PERMISSIONCHECK_USER_DENY_BY_SERVER: return @"百度开发者账户已被平台删除";
+        default: return @"请检查百度控制台中的 AK、应用类型和启用服务";
+    }
+}
+
 static NSDictionary *BaiduPoint(CLLocationCoordinate2D point) {
     return @{@"longitude": @(point.longitude), @"latitude": @(point.latitude)};
 }
@@ -54,7 +68,9 @@ static NSDictionary *BaiduPoint(CLLocationCoordinate2D point) {
                        result:(BMKSuggestionSearchResult *)result
                     errorCode:(BMKSearchErrorCode)errorCode {
     if (errorCode != BMK_SEARCH_NO_ERROR && errorCode != BMK_SEARCH_RESULT_NOT_FOUND) {
-        [self finishWithObject:nil error:BaiduError(@"百度地点检索失败，请检查 AK、网络和应用标识", errorCode)];
+        NSString *message = [NSString stringWithFormat:@"百度地点检索错误 %ld，请检查网络和已启用的服务",
+                             (long)errorCode];
+        [self finishWithObject:nil error:BaiduError(message, errorCode)];
         return;
     }
     NSMutableArray *places = [NSMutableArray array];
@@ -80,7 +96,9 @@ static NSDictionary *BaiduPoint(CLLocationCoordinate2D point) {
                          result:(BMKDrivingRouteSearchResult *)result
                       errorCode:(BMKSearchErrorCode)errorCode {
     if (errorCode != BMK_SEARCH_NO_ERROR) {
-        [self finishWithObject:nil error:BaiduError(@"百度路线规划失败，请检查 AK、网络和终点", errorCode)];
+        NSString *message = [NSString stringWithFormat:@"百度路线规划错误 %ld，请检查网络、服务和终点",
+                             (long)errorCode];
+        [self finishWithObject:nil error:BaiduError(message, errorCode)];
         return;
     }
     NSMutableArray *routes = [NSMutableArray array];
@@ -183,7 +201,10 @@ static NSDictionary *BaiduPoint(CLLocationCoordinate2D point) {
 - (NSError *)readinessError {
     if (!_manager) { return BaiduError(@"请先同意隐私条款并填写百度 iOS AK", -1); }
     if (_authorizationError != 0) {
-        return BaiduError(@"百度 AK 鉴权失败，请核对 AK 与安装后的 Bundle ID", _authorizationError);
+        NSString *message = [NSString stringWithFormat:@"百度鉴权错误 %ld：%@",
+                             (long)_authorizationError,
+                             BaiduAuthorizationDescription(_authorizationError)];
+        return BaiduError(message, _authorizationError);
     }
     return nil;
 }
