@@ -23,8 +23,8 @@ jobs:
         run: |
           set -euo pipefail
           # These are the reviewed Git tree IDs of the iOS and shared sources.
-          expected_ios=e80c87422af7185d74b936b84cebc4338b825e3f
-          expected_shared=c0e10df41647eb15be741b2e09026dcd680c2e95
+          expected_ios=97efd808b6199f8d04757fd86b9509669acdef91
+          expected_shared=59cdca66795f6844e73daf0f3d8e18db20292ba2
           actual_ios="$(git rev-parse HEAD:platforms/ios)"
           actual_shared="$(git rev-parse HEAD:shared)"
           printf 'Source commit: %s\niOS tree: %s\nShared tree: %s\n' \
@@ -79,6 +79,7 @@ jobs:
           # CodeQL checks source code; it cannot analyze proprietary SDK binaries.
           for entry in \
             'BaiduMapAPI_Base 72d40fc7f8d8c53cc68b16a4d0939a2cf29380e82775f3b903486bcd3dc88d11' \
+            'BaiduMapAPI_Map 18d272934367ca6d5426d443d11cce778fcfb8a35a9847076f7e9ca271ae8c57' \
             'BaiduMapAPI_Search be571dfa571bfd2637199e3d5078975d52c89ecc11382b56069b4e65ade8b416' \
             'BaiduMapAPI_Utils 46e91618627e193484f37cd3b1100d155437a189683bcd3a471a6a4d69845bb0'; do
             read -r name digest <<< "$entry"

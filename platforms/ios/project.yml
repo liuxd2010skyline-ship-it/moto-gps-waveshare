@@ -78,6 +78,7 @@ targets:
           - $(SRCROOT)/../../shared/coordinates/include
           - $(SRCROOT)/../../shared
           - $(SRCROOT)/../../shared/nav_app/include
+          - $(SRCROOT)/../../shared/nav_ui/include
         CLANG_CXX_LANGUAGE_STANDARD: c++17
         CLANG_CXX_LIBRARY: libc++
         GENERATE_INFOPLIST_FILE: NO

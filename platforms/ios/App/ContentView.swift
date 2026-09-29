@@ -1,3 +1,4 @@
+import MotoNavigationCore
 import SwiftUI
 
 enum MotoScreen: Hashable {
@@ -290,13 +291,27 @@ struct ContentView: View {
                     Label("从我的位置出发", systemImage: "location.fill").textCase(nil)
                 }
 
+                Section("出行方式") {
+                    Picker("路线类型", selection: Binding(
+                        get: { model.selectedTravelMode },
+                        set: { model.selectTravelMode($0) }
+                    )) {
+                        Text("驾车参考").tag(RouteMode.driving)
+                        Text("自行车").tag(RouteMode.cycling)
+                        Text("电动自行车").tag(RouteMode.electricBicycle)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("route-travel-mode")
+                }
+
                 if model.isPlanningRoutePreview {
                     Section {
                         HStack(spacing: 14) {
                             ProgressView()
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("正在规划路线")
-                                Text("获取当前位置与路况…")
+                                Text(model.selectedTravelMode == .driving
+                                     ? "获取当前位置与路况…" : "获取当前位置与骑行路线…")
                                     .font(.subheadline)
                                     .foregroundStyle(Color.secondary)
                             }
@@ -308,9 +323,7 @@ struct ContentView: View {
                     Section {
                         RouteOverviewMap(
                             candidates: model.routePreviewCandidates,
-                            selectedID: model.selectedRoutePreviewID,
-                            origin: model.routePreviewOrigin,
-                            destination: place.location
+                            selectedID: model.selectedRoutePreviewID
                         )
                         .frame(height: dynamicTypeSize.isAccessibilitySize ? 220 : 270)
                         .listRowInsets(EdgeInsets())
@@ -322,10 +335,12 @@ struct ContentView: View {
                     } header: {
                         Text("选择路线")
                     } footer: {
-                        Text("百度驾车路线 · 优先避开高速 · 非摩托车专用")
+                        Text(model.selectedTravelMode == .driving
+                             ? "百度驾车路线 · 优先避开高速 · 非摩托车专用"
+                             : "百度骑行路线 · 与驾车路线不同 · 请遵守当地通行规定")
                     }
                     Section {
-                        Label("路线由百度地图提供；周边地图下载暂不可用", systemImage: "info.circle")
+                        Label("预览显示百度道路底图和微雪风格路线；圆屏周边道路数据仍待接入", systemImage: "info.circle")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -389,9 +404,11 @@ struct ContentView: View {
                             routeDistance(candidate)
                         }
                     }
-                    Label(candidate.trafficSummary, systemImage: "car.side")
-                        .font(.subheadline)
-                        .foregroundStyle(trafficTint(candidate))
+                    if model.selectedTravelMode == .driving {
+                        Label(candidate.trafficSummary, systemImage: "car.side")
+                            .font(.subheadline)
+                            .foregroundStyle(trafficTint(candidate))
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
@@ -403,7 +420,8 @@ struct ContentView: View {
             .contentShape(Rectangle())
         }
         .accessibilityIdentifier("route-option-\(candidate.ordinal)")
-        .accessibilityLabel("\(candidate.title)，\(candidate.durationText)，\(candidate.distanceText)，\(candidate.trafficSummary)")
+        .accessibilityLabel("\(candidate.title)，\(candidate.durationText)，\(candidate.distanceText)" +
+                            (model.selectedTravelMode == .driving ? "，\(candidate.trafficSummary)" : ""))
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 

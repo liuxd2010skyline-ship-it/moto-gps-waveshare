@@ -1,4 +1,5 @@
 #include "moto_nav_ui.h"
+#include "moto_map_visual_style.h"
 
 #include <algorithm>
 #include <cmath>
@@ -13,27 +14,31 @@ LV_FONT_DECLARE(moto_font_nav_16);
 
 namespace {
 
-constexpr lv_color_t kBlack = LV_COLOR_MAKE(0x05, 0x06, 0x07);
-constexpr lv_color_t kWhite = LV_COLOR_MAKE(0xF3, 0xF4, 0xEF);
-constexpr lv_color_t kIce = LV_COLOR_MAKE(0xB8, 0xED, 0xF5);
-constexpr lv_color_t kGraphite = LV_COLOR_MAKE(0x30, 0x35, 0x39);
+#define MOTO_LV_COLOR(value) LV_COLOR_MAKE( \
+    MOTO_MAP_RED(value), MOTO_MAP_GREEN(value), MOTO_MAP_BLUE(value))
+constexpr lv_color_t kBlack = MOTO_LV_COLOR(MOTO_MAP_BLACK);
+constexpr lv_color_t kWhite = MOTO_LV_COLOR(MOTO_MAP_ROUTE);
+constexpr lv_color_t kIce = MOTO_LV_COLOR(MOTO_MAP_ICE);
+constexpr lv_color_t kGraphite = MOTO_LV_COLOR(MOTO_MAP_ROUTE_SHADOW);
 // Real surrounding roads need to remain legible on the AMOLED's true-black
 // background.  LV_OPA_70 is 70/255 (not 70 percent), which made the previous
 // road layer effectively disappear on the physical display.
-constexpr lv_color_t kRoadGray = LV_COLOR_MAKE(0x42, 0x47, 0x4B);
-constexpr lv_color_t kRoadMajor = LV_COLOR_MAKE(0x62, 0x69, 0x6D);
-constexpr lv_color_t kRoadMinor = LV_COLOR_MAKE(0x2B, 0x30, 0x33);
-constexpr lv_color_t kBuildingGray = LV_COLOR_MAKE(0x24, 0x29, 0x2C);
-constexpr lv_color_t kBuildingLandmark = LV_COLOR_MAKE(0x38, 0x40, 0x44);
+constexpr lv_color_t kRoadGray = MOTO_LV_COLOR(MOTO_MAP_ROAD);
+constexpr lv_color_t kRoadMajor = MOTO_LV_COLOR(MOTO_MAP_ROAD_MAJOR);
+constexpr lv_color_t kRoadMinor = MOTO_LV_COLOR(MOTO_MAP_ROAD_MINOR);
+constexpr lv_color_t kBuildingGray = MOTO_LV_COLOR(MOTO_MAP_BUILDING);
+constexpr lv_color_t kBuildingLandmark =
+    MOTO_LV_COLOR(MOTO_MAP_BUILDING_LANDMARK);
 constexpr lv_color_t kQuiet = LV_COLOR_MAKE(0x78, 0x7E, 0x7F);
 constexpr lv_color_t kSoft = LV_COLOR_MAKE(0xAE, 0xB2, 0xB0);
-constexpr lv_color_t kAmber = LV_COLOR_MAKE(0xE6, 0xC8, 0x4F);
+constexpr lv_color_t kAmber = MOTO_LV_COLOR(MOTO_MAP_AMBER);
+#undef MOTO_LV_COLOR
 constexpr lv_color_t kRed = LV_COLOR_MAKE(0xFF, 0x4B, 0x43);
 constexpr lv_color_t kGreen = LV_COLOR_MAKE(0x69, 0xD4, 0x94);
 constexpr double kPi = 3.14159265358979323846;
 constexpr int kCompassTickCount = 24;
 constexpr int kSpeedTickCount = 18;
-constexpr int kDesignWidth = 360;
+constexpr int kDesignWidth = MOTO_MAP_DESIGN_WIDTH;
 constexpr std::uint32_t kPageDotsVisibleMs = 5'000;
 // Keep LVGL, the UI interpolation timer and IMU presentation on the same
 // 40 Hz cadence. The previous 40/33 ms mismatch periodically produced a
@@ -107,6 +112,7 @@ struct Ui {
     std::uint32_t nav_road_scene_revision = 0;
     lv_obj_t *nav_route_shadow = nullptr;
     lv_obj_t *nav_route = nullptr;
+    lv_obj_t *nav_map_fade = nullptr;
     MapPolyline nav_route_shadow_line{};
     MapPolyline nav_route_line{};
     lv_point_precise_t nav_route_points[MOTO_UI_ROUTE_POINT_CAPACITY]{};
@@ -460,6 +466,30 @@ lv_obj_t *create_map_polyline(lv_obj_t *parent, MapPolyline &polyline) {
     return object;
 }
 
+void draw_map_fade(lv_event_t *event) {
+    lv_obj_t *object = lv_event_get_target_obj(event);
+    lv_area_t area;
+    lv_obj_get_coords(object, &area);
+    lv_layer_t *layer = lv_event_get_layer(event);
+    // Fade the surrounding map into the black guidance area. Draw this over
+    // roads/buildings but under the route and vehicle, so guidance stays clear.
+    constexpr int kBands = MOTO_MAP_FADE_BANDS;
+    const int height = area.y2 - area.y1 + 1;
+    for(int index = 0; index < kBands; ++index) {
+        const int top = area.y1 + index * height / kBands;
+        const int bottom = area.y1 + (index + 1) * height / kBands - 1;
+        if(bottom < top) continue;
+        lv_draw_rect_dsc_t band;
+        lv_draw_rect_dsc_init(&band);
+        band.bg_color = kBlack;
+        band.bg_opa = static_cast<lv_opa_t>(
+            (index + 1) * (index + 1) * 255 / (kBands * kBands));
+        band.border_opa = LV_OPA_TRANSP;
+        const lv_area_t strip = {area.x1, top, area.x2, bottom};
+        lv_draw_rect(layer, &band, &strip);
+    }
+}
+
 void set_map_polyline_points(lv_obj_t *object, const lv_point_precise_t *points,
                             std::uint16_t count) {
     auto *polyline = static_cast<MapPolyline *>(lv_obj_get_user_data(object));
@@ -671,7 +701,11 @@ void update_road_geometry(const moto_ui_state_t *state) {
                 const bool major = road_class <= 2U;
                 const bool service = road_class >= 4U;
                 lv_obj_set_style_line_width(
-                    ui.nav_roads[i], px(major ? 4 : (service ? 2 : 3)), 0);
+                    ui.nav_roads[i],
+                    px(major ? MOTO_MAP_ROAD_MAJOR_WIDTH
+                             : (service ? MOTO_MAP_ROAD_MINOR_WIDTH
+                                        : MOTO_MAP_ROAD_WIDTH)),
+                    0);
                 lv_obj_set_style_line_color(
                     ui.nav_roads[i],
                     major ? kRoadMajor : (service ? kRoadMinor : kRoadGray), 0);
@@ -1541,7 +1575,7 @@ void create_navigation_page() {
         ui.nav_buildings[i] = create_map_polyline(ui.nav_map,
                                                   ui.nav_building_lines[i]);
         lv_obj_set_size(ui.nav_buildings[i], MOTO_UI_CANVAS_WIDTH, px(232));
-        lv_obj_set_style_line_width(ui.nav_buildings[i], px(1), 0);
+        lv_obj_set_style_line_width(ui.nav_buildings[i], px(MOTO_MAP_BUILDING_WIDTH), 0);
         lv_obj_set_style_line_color(ui.nav_buildings[i], kBuildingGray, 0);
         lv_obj_set_style_line_opa(ui.nav_buildings[i], LV_OPA_COVER, 0);
         lv_obj_set_style_line_rounded(ui.nav_buildings[i], false, 0);
@@ -1555,21 +1589,31 @@ void create_navigation_page() {
     for(std::uint8_t i = 0; i < MOTO_UI_ROAD_POLYLINE_CAPACITY; ++i) {
         ui.nav_roads[i] = create_map_polyline(ui.nav_map, ui.nav_road_lines[i]);
         lv_obj_set_size(ui.nav_roads[i], MOTO_UI_CANVAS_WIDTH, px(232));
-        lv_obj_set_style_line_width(ui.nav_roads[i], px(3), 0);
+        lv_obj_set_style_line_width(ui.nav_roads[i], px(MOTO_MAP_ROAD_WIDTH), 0);
         lv_obj_set_style_line_color(ui.nav_roads[i], kRoadGray, 0);
         lv_obj_set_style_line_opa(ui.nav_roads[i], LV_OPA_COVER, 0);
         lv_obj_set_style_line_rounded(ui.nav_roads[i], true, 0);
         lv_obj_add_flag(ui.nav_roads[i], LV_OBJ_FLAG_HIDDEN);
     }
 
+    ui.nav_map_fade = lv_obj_create(ui.nav_map);
+    lv_obj_remove_style_all(ui.nav_map_fade);
+    lv_obj_set_size(ui.nav_map_fade, MOTO_UI_CANVAS_WIDTH,
+                    px(MOTO_MAP_FADE_HEIGHT));
+    lv_obj_set_pos(ui.nav_map_fade, 0, px(MOTO_MAP_FADE_START_Y));
+    lv_obj_remove_flag(ui.nav_map_fade, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(ui.nav_map_fade, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(ui.nav_map_fade, draw_map_fade,
+                        LV_EVENT_DRAW_MAIN_END, nullptr);
+
     ui.nav_route_shadow = create_map_polyline(ui.nav_map, ui.nav_route_shadow_line);
     lv_obj_set_size(ui.nav_route_shadow, MOTO_UI_CANVAS_WIDTH, px(232));
-    lv_obj_set_style_line_width(ui.nav_route_shadow, px(13), 0);
+    lv_obj_set_style_line_width(ui.nav_route_shadow, px(MOTO_MAP_ROUTE_SHADOW_WIDTH), 0);
     lv_obj_set_style_line_color(ui.nav_route_shadow, kGraphite, 0);
     lv_obj_set_style_line_rounded(ui.nav_route_shadow, true, 0);
     ui.nav_route = create_map_polyline(ui.nav_map, ui.nav_route_line);
     lv_obj_set_size(ui.nav_route, MOTO_UI_CANVAS_WIDTH, px(232));
-    lv_obj_set_style_line_width(ui.nav_route, px(6), 0);
+    lv_obj_set_style_line_width(ui.nav_route, px(MOTO_MAP_ROUTE_WIDTH), 0);
     lv_obj_set_style_line_color(ui.nav_route, kWhite, 0);
     lv_obj_set_style_line_rounded(ui.nav_route, true, 0);
     ui.nav_route_motion_timer = lv_timer_create(route_motion_tick,

@@ -4,11 +4,13 @@ import MotoNavigationCore
 enum BaiduNavigationError: LocalizedError {
     case setupRequired
     case invalidResult
+    case ridingDistanceLimit
 
     var errorDescription: String? {
         switch self {
         case .setupRequired: "请在首页“百度地图配置”中同意隐私说明并填写 iOS AK"
         case .invalidResult: "百度地图没有返回可用路线，请换一个目的地重试"
+        case .ridingDistanceLimit: "骑行路线起终点直线距离不能超过 100 公里，请选择更近的终点"
         }
     }
 }
@@ -60,17 +62,22 @@ private struct BaiduRoute: Decodable {
 private final class BaiduMapClient {
     static let shared = BaiduMapClient()
 
-    private func start() throws {
+    private func start() async throws {
         guard UserDefaults.standard.bool(forKey: BaiduMapSetup.privacyKey),
               let ak = UserDefaults.standard.string(forKey: BaiduMapSetup.akKey)?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
-              !ak.isEmpty,
-              BaiduMapBridge.shared().start(withAK: ak)
+              !ak.isEmpty
         else { throw BaiduNavigationError.setupRequired }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            BaiduMapBridge.shared().authorize(withAK: ak) { error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume() }
+            }
+        }
     }
 
     func places(_ keywords: String, near origin: WGS84Point?) async throws -> [BaiduPlace] {
-        try start()
+        try await start()
         let data: Data = try await withCheckedThrowingContinuation { continuation in
             BaiduMapBridge.shared().searchPlaces(
                 keywords,
@@ -86,28 +93,57 @@ private final class BaiduMapClient {
     }
 
     func routes(_ request: RouteRequest, multiple: Bool) async throws -> [BaiduRoute] {
-        try start()
+        try await start()
+        if request.routeMode != .driving,
+           Self.distanceM(from: request.origin, to: request.destination) > 100_000 {
+            throw BaiduNavigationError.ridingDistanceLimit
+        }
         let data: Data = try await withCheckedThrowingContinuation { continuation in
-            BaiduMapBridge.shared().drivingRoutes(
-                fromLatitude: request.origin.latitudeDeg,
-                longitude: request.origin.longitudeDeg,
-                destinationLatitude: request.destination.latitudeDeg,
-                longitude: request.destination.longitudeDeg,
-                destinationUID: request.destinationPOIID,
-                multiple: multiple
-            ) { data, error in
+            let completion: BaiduMapDataCompletion = { data, error in
                 if let error { continuation.resume(throwing: error) }
                 else if let data { continuation.resume(returning: data) }
                 else { continuation.resume(throwing: BaiduNavigationError.invalidResult) }
             }
+            switch request.routeMode {
+            case .driving:
+                BaiduMapBridge.shared().drivingRoutes(
+                    fromLatitude: request.origin.latitudeDeg,
+                    longitude: request.origin.longitudeDeg,
+                    destinationLatitude: request.destination.latitudeDeg,
+                    longitude: request.destination.longitudeDeg,
+                    destinationUID: request.destinationPOIID,
+                    multiple: multiple,
+                    completion: completion
+                )
+            case .cycling, .electricBicycle:
+                BaiduMapBridge.shared().ridingRoutes(
+                    fromLatitude: request.origin.latitudeDeg,
+                    longitude: request.origin.longitudeDeg,
+                    destinationLatitude: request.destination.latitudeDeg,
+                    longitude: request.destination.longitudeDeg,
+                    electricBike: request.routeMode == .electricBicycle,
+                    completion: completion
+                )
+            }
         }
         return try JSONDecoder().decode([BaiduRoute].self, from: data)
+    }
+
+    private static func distanceM(from start: WGS84Point, to end: WGS84Point) -> Double {
+        let startLatitude = start.latitudeDeg * .pi / 180
+        let endLatitude = end.latitudeDeg * .pi / 180
+        let latitudeDelta = endLatitude - startLatitude
+        let longitudeDelta = (end.longitudeDeg - start.longitudeDeg) * .pi / 180
+        let haversine = pow(sin(latitudeDelta / 2), 2) +
+            cos(startLatitude) * cos(endLatitude) * pow(sin(longitudeDelta / 2), 2)
+        return 12_742_000 * asin(sqrt(min(1, max(0, haversine))))
     }
 }
 
 enum BaiduMapSetup {
     static let privacyKey = "MotoGPS.BaiduPrivacyAccepted.v1"
     static let akKey = "MotoGPS.BaiduIOSAK.v1"
+    static let mapStyleIDKey = "MotoGPS.BaiduMapStyleID.v1"
 }
 
 final class BaiduPlaceProvider: @unchecked Sendable {

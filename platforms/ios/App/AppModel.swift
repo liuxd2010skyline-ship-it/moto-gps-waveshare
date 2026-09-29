@@ -22,6 +22,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var routePreviewOrigin: WGS84Point?
     @Published private(set) var isPlanningRoutePreview = false
     @Published private(set) var routePreviewFailure: String?
+    @Published private(set) var selectedTravelMode: RouteMode = .driving
 
     private let bluetooth = ESP32BLECentral()
     private let liveLocation = CoreLocationNavigationSource()
@@ -168,7 +169,8 @@ final class AppModel: ObservableObject {
         }
         switch navigation.stateName {
         case "acquiring": return "请保持精确定位开启"
-        case "planning": return "正在读取百度驾车路线"
+        case "planning": return selectedTravelMode == .driving
+            ? "正在读取百度驾车路线" : "正在读取百度骑行路线"
         case "navigating": return deviceReady ? "手机可以锁屏并放入口袋" : "手机继续导航，圆屏连接后自动同步"
         case "rerouting": return "新路线生成后会自动同步到圆屏"
         case "arrived": return "本次导航已经完成"
@@ -300,7 +302,8 @@ final class AppModel: ObservableObject {
                 selectedRoute: selectedRoutePreview.route,
                 selectedRouteOrigin: routePreviewOrigin,
                 liveProvider: liveRouteProvider
-            )
+            ),
+            routeMode: selectedTravelMode
         )
         bind(runtime)
         self.runtime = runtime
@@ -362,6 +365,12 @@ final class AppModel: ObservableObject {
         navigationFailure = nil
     }
 
+    func selectTravelMode(_ mode: RouteMode) {
+        guard !isNavigationActive, selectedTravelMode != mode else { return }
+        selectedTravelMode = mode
+        if selectedPlace != nil { planRoutePreview() }
+    }
+
     func planRoutePreview() {
         guard !isNavigationActive, selectedPlace != nil else { return }
         routePreviewGeneration &+= 1
@@ -398,7 +407,11 @@ final class AppModel: ObservableObject {
                 self?.navigationFailure = nil
             }
             self?.bluetooth.sendNavigationSnapshot(snapshot)
-            if snapshot.hasRouteView {
+            // The bundled Jinan scene is an OSM demo fixture. Real Baidu
+            // navigation must not silently mix that source into the map.
+            // Keep the MapScene/LVGL pipeline for an authorized Chinese road
+            // source; the explicit demo still exercises the existing drawing.
+            if self?.isDemoActive == true, snapshot.hasRouteView {
                 self?.surroundingMap.update(
                     latitudeDeg: snapshot.routeViewOriginLatitudeDeg,
                     longitudeDeg: snapshot.routeViewOriginLongitudeDeg
@@ -424,6 +437,7 @@ final class AppModel: ObservableObject {
             requestID: routePreviewRequestID,
             origin: origin,
             destination: place.location,
+            routeMode: selectedTravelMode,
             destinationPOIID: place.id.isEmpty ? nil : place.id
         )
         let routeProvider = liveRouteProvider

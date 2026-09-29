@@ -23,6 +23,24 @@ final class RouteContractTests: XCTestCase {
         XCTAssertEqual(origin["longitude_deg"] as? Double, 116.397389)
     }
 
+    func testReroutesKeepTheSelectedRidingModeInTheWireContract() throws {
+        for mode in [RouteMode.cycling, .electricBicycle] {
+            let request = RouteRequest(
+                requestID: 42,
+                origin: WGS84Point(longitudeDeg: 116.397389, latitudeDeg: 39.908722),
+                destination: WGS84Point(longitudeDeg: 116.410886, latitudeDeg: 39.920150),
+                routeMode: mode,
+                isReroute: true,
+                previousRouteID: "earlier-route"
+            )
+            let object = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any]
+            )
+            XCTAssertEqual(object["route_mode"] as? String, mode.rawValue)
+            XCTAssertEqual(object["is_reroute"] as? Bool, true)
+        }
+    }
+
     func testSpeedConversionClampsInvalidNegativeSensorValues() {
         let fix = NavigationFix(
             coordinate: WGS84Point(longitudeDeg: 0, latitudeDeg: 0),
