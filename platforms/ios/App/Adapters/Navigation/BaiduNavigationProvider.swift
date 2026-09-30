@@ -143,7 +143,6 @@ private final class BaiduMapClient {
 enum BaiduMapSetup {
     static let privacyKey = "MotoGPS.BaiduPrivacyAccepted.v1"
     static let akKey = "MotoGPS.BaiduIOSAK.v1"
-    static let mapStyleIDKey = "MotoGPS.BaiduMapStyleID.v1"
 }
 
 final class BaiduPlaceProvider: @unchecked Sendable {

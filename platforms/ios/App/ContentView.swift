@@ -323,7 +323,9 @@ struct ContentView: View {
                     Section {
                         RouteOverviewMap(
                             candidates: model.routePreviewCandidates,
-                            selectedID: model.selectedRoutePreviewID
+                            selectedID: model.selectedRoutePreviewID,
+                            origin: model.routePreviewOrigin,
+                            destination: place.location
                         )
                         .frame(height: dynamicTypeSize.isAccessibilitySize ? 220 : 270)
                         .listRowInsets(EdgeInsets())
@@ -340,7 +342,7 @@ struct ContentView: View {
                              : "百度骑行路线 · 与驾车路线不同 · 请遵守当地通行规定")
                     }
                     Section {
-                        Label("预览显示百度道路底图和微雪风格路线；圆屏周边道路数据仍待接入", systemImage: "info.circle")
+                        Label("路线由百度地图提供；此处仅绘制路线示意", systemImage: "info.circle")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
