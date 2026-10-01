@@ -10,6 +10,12 @@
 - ZIP SHA-256：`b6493ce617a6bac455d5c7931531c3e026a5c01a00c7e2f4d5cbe76c20115d04`；内含 `MotoGPS-unsigned.ipa` SHA-256：`06888255d5c3f603668477f0da2cb781f7c72eca409ade9c8d42344e273f97ca`。这两个值已在本机复算，IPA 值与构建内的 `SHA256SUMS.txt` 相同。
 - IPA 未签名；该 SHA 对应原始构建包，侧载工具签名后安装在手机上的字节会改变。当前版本的手机验收依据是用户反馈，圆屏尚未验收。
 
+## 最新 iPhone 构建（待手机回归）
+
+- 在第二阶段版本上，只补了从济南演示切换到真实导航时发送空 `MapScene` 的清理动作；没有改微雪固件的绘图源码、圆屏布局或手机路线预览。源码提交为 `29a0c3eacba1bfbe9cce9ae146b307f07e24b996`。
+- [iPhone 构建](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/36882785845)已通过源码锁、固定版本百度 SDK 校验、iPhone 编译、CodeQL 检查和 IPA 上传。artifact ID `11173528363`，平台保留至 2026-10-08；ZIP 已在本地 `build/phase3/` 留存，SHA-256 为 `bcda56e24aeb7467a781514ed722eaf5d3c757667e8fb490505c45357cad6cc6`，内含未签名 IPA SHA-256 为 `cb74d7ff99a534f13e3f17c48446d4d1c22729acfdcc9dc8ae72feab0d1536c4`。两者已复算，IPA 值与包内 `SHA256SUMS.txt` 一致。包内应用标识仍是 `com.liuxd2010skyline.motogps`，最低 iOS 17.0。
+- [Source checks](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/36885738008) 已通过 C++/数据与跨平台 Swift 核心测试。新增的 App 层“清除演示底图”回归测试已写入源码，但目前的 IPA 工作流只编译 App，尚未在 iOS 模拟器或实体手机执行这条 XCTest；不能把构建成功写成此行为的真机验收。
+
 ## 原作者机制优先的实施决定
 
 目标效果是原作者圆屏上的真实周边道路、建筑与高亮路线；原理固定为「手机取得并整理地图几何 → BLE 发送局部 `MapScene` → ESP32/LVGL 自行绘制」。不以传输地图截图、屏幕镜像或重做手机预览替代这条主链。已核对当前分支与原作者上游：`platforms/esp32` 的编译和绘图源码、`shared/ble_protocol`、`shared/nav_core`、`shared/offline_map` 未因本轮准备而修改；固件 README 只新增当前安装入口。`shared/nav_ui` 仅抽取同值样式常量并加入下缘渐变，几何与 BLE 绘图流程沿用。
@@ -29,6 +35,7 @@
 ## 硬件到货前的准备清单
 
 - [x] 保存第二阶段成功的 iPhone IPA、构建链接、源码提交与 SHA-256，作为可回退基线。手机端已经实测通过；这不等于 ESP32 已验收。
+- [x] 保存当前修正后的 iPhone IPA 与摘要；该版本的 CI 已通过，切换演示场景的清图行为仍待 iPhone + 圆屏联调确认。
 - [x] GitHub CI 用 ESP-IDF 5.5.5 编译当前 `platforms/esp32`：[成功的固件构建](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/36812354053) 已生成 bootloader、分区表、应用镜像、`flasher_args.json`、`flash_project_args`、`sdkconfig` 和逐文件 SHA-256。固件 ZIP 已在本地 `build/phase3/` 保存，ZIP SHA-256 为 `64a1a206237983e0b88bc9e2457149aea6830a24977b8ed9279ef4e85ee97fcc`，七个内含文件的摘要均已复算通过。构建源码为 `5dce4829719d468f5496e60f3268a4eba2e083ec`；尚未对实体板刷写或启动。
 - [x] 共享协议固定样本、`MapScene 0x14` 的满容量分片/重组、道路建筑原子替换和清空、绘图稳定性均在 [Source checks](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/36812354054) 通过；这只是软件验证，不算显示、功耗或 BLE 真机验收。
 - [ ] 第一个实际骑行测试区域已选定为北京市海淀区；需核实国内正式要素接口能否取得道路及地物真实几何，以及圆屏重绘、额度、可用缓存、署名要求。公开资料的核查与咨询稿见 [北京海淀区数据源核查](BEIJING_HAIDIAN_MAP_SOURCE_REVIEW.md)。未获得许可和样本时不接入地图底图。

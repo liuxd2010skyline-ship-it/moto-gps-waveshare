@@ -2,11 +2,12 @@
 
 本卡对应当前 iPhone + BLE 圆屏方案；首个实测区域为北京市海淀区。硬件尚未到货，以下是到货后的步骤，不代表已通过实板测试。完整型号只能是 **Waveshare ESP32-S3-Touch-AMOLED-1.75C**。项目预期 ESP32-S3、466×466 的 CO5300 圆屏、CST9217 触控、**32 MB Flash**、8 MB PSRAM；型号、容量或安全状态不符时先停在检查步骤。
 
-## 到货前保留的三个文件
+## 到货前保留的四项资料
 
-1. 第二阶段 iPhone 包：GitHub [成功构建 #9](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/36751064709) 的 `MotoGPS-checked-unsigned-IPA`；源码 `278495b9322bf9c8cdd3632b0c920cf650869c06`。ZIP SHA-256 为 `b6493ce617a6bac455d5c7931531c3e026a5c01a00c7e2f4d5cbe76c20115d04`，内含原始未签名 IPA SHA-256 为 `06888255d5c3f603668477f0da2cb781f7c72eca409ade9c8d42344e273f97ca`。GitHub 的临时 artifact 会过期，因此本机另存一份。
-2. 圆屏固件：[成功构建](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/36812354053) 的 `MotoGPS-ESP32S3-1.75C-5dce4829719d468f5496e60f3268a4eba2e083ec`。GitHub artifact ID 为 `11139857869`，平台保留至 2026-10-31；本机已另存 ZIP。ZIP SHA-256 为 `64a1a206237983e0b88bc9e2457149aea6830a24977b8ed9279ef4e85ee97fcc`。解压后含 `BUILD_INFO.txt`、`SHA256SUMS.txt`、`flasher_args.json`、`flash_project_args`、bootloader、分区表和应用镜像；七个内含文件的摘要已复算通过。只使用同一构建包内的文件与偏移，不能混搭其他版本。
-3. 本机备份目录先建好，实际读出的原厂 Flash 备份放在其中，**不上传 GitHub 或发到聊天**；它可能含设备私有内容。保留一份不在下载文件夹中的副本和 SHA-256。
+1. 当前 iPhone 包：[成功构建](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/36882785845)；源码 `29a0c3eacba1bfbe9cce9ae146b307f07e24b996`。ZIP SHA-256 为 `bcda56e24aeb7467a781514ed722eaf5d3c757667e8fb490505c45357cad6cc6`，内含原始未签名 IPA SHA-256 为 `cb74d7ff99a534f13e3f17c48446d4d1c22729acfdcc9dc8ae72feab0d1536c4`。已另存 ZIP 和直接用于侧载签名的 IPA；原始应用标识 `com.liuxd2010skyline.motogps`，最低 iOS 17.0。新增的离开演示清图动作仍待手机与圆屏一起回归。
+2. 第二阶段 iPhone 回退包：GitHub [成功构建 #9](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/36751064709)；源码 `278495b9322bf9c8cdd3632b0c920cf650869c06`。ZIP SHA-256 为 `b6493ce617a6bac455d5c7931531c3e026a5c01a00c7e2f4d5cbe76c20115d04`，内含原始未签名 IPA SHA-256 为 `06888255d5c3f603668477f0da2cb781f7c72eca409ade9c8d42344e273f97ca`。该版已由用户在手机上测试，通过作为回退基线；GitHub 临时 artifact 会过期，本机另存一份。
+3. 圆屏固件：[成功构建](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/36812354053) 的 `MotoGPS-ESP32S3-1.75C-5dce4829719d468f5496e60f3268a4eba2e083ec`。GitHub artifact ID 为 `11139857869`，平台保留至 2026-10-31；本机已另存 ZIP。ZIP SHA-256 为 `64a1a206237983e0b88bc9e2457149aea6830a24977b8ed9279ef4e85ee97fcc`。解压后含 `BUILD_INFO.txt`、`SHA256SUMS.txt`、`flasher_args.json`、`flash_project_args`、bootloader、分区表和应用镜像；七个内含文件的摘要已复算通过。只使用同一构建包内的文件与偏移，不能混搭其他版本。
+4. 本机备份目录先建好，实际读出的原厂 Flash 备份放在其中，**不上传 GitHub 或发到聊天**；它可能含设备私有内容。保留一份不在下载文件夹中的副本和 SHA-256。
 
 ## Windows 准备
 
