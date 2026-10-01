@@ -36,10 +36,14 @@ jobs:
           node scripts/generate_jinan_demo_fixture.mjs --check
           node scripts/offline_map/validate_jinan_sqlite.mjs
   swift-core:
-    runs-on: macos-latest
+    # This package imports Foundation/XCTest only. Run it on the installed
+    # Ubuntu Swift toolchain so core checks do not wait for scarce macOS hosts.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - name: Swift core tests (no signing or device)
-        run: swift test --package-path platforms/ios
+        run: |
+          swift --version
+          swift test --package-path platforms/ios
