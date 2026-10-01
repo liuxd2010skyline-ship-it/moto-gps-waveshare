@@ -473,12 +473,23 @@ final class SurroundingMapStore: ObservableObject {
     }
 
     func reset() {
+        let previousOrigin = lastOrigin
         generation &+= 1
         sceneTask?.cancel()
         sceneTask = nil
         lastOrigin = nil
         retryAfter = nil
         statusText = "在线地图优先，离线地图备用"
+        // Reset is also used when leaving the bundled Jinan demo for a real
+        // route.  The ESP32 retains the last complete MapScene until it gets
+        // a newer revision, so send an empty replacement instead of leaving
+        // demo roads under a live route on an uninterrupted BLE connection.
+        if let previousOrigin {
+            revision &+= 1
+            if revision == 0 { revision = 1 }
+            onScene?(OfflineMapSceneWindow(revision: revision, origin: previousOrigin,
+                                           radiusM: 500, roads: [], buildings: []))
+        }
     }
 
     func download(name: String, detail: String, tiles: [MapTileID]) {

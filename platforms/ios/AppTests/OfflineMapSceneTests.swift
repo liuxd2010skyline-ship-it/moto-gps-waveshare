@@ -97,6 +97,30 @@ final class OfflineMapSceneTests: XCTestCase {
         XCTAssertTrue(window.buildings.isEmpty)
     }
 
+    func testLeavingDemoExplicitlyClearsTheLastMapScene() throws {
+        let storage = FileManager.default.temporaryDirectory
+            .appendingPathComponent("motogps-map-reset-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: storage) }
+        let store = SurroundingMapStore(
+            baseURL: URL(string: "https://unused.invalid")!, storageURL: storage,
+            loader: { _ in throw URLError(.notConnectedToInternet) }
+        )
+        var scenes: [OfflineMapSceneWindow] = []
+        store.onScene = { scenes.append($0) }
+        store.update(latitudeDeg: 36.675246, longitudeDeg: 117.128578)
+        store.reset()
+
+        let clear = try XCTUnwrap(scenes.last)
+        XCTAssertEqual(clear.origin, OfflineMapPointE6(
+            latitudeE6: 36_675_246, longitudeE6: 117_128_578
+        ))
+        XCTAssertGreaterThan(clear.revision, 0)
+        XCTAssertTrue(clear.roads.isEmpty)
+        XCTAssertTrue(clear.buildings.isEmpty)
+        XCTAssertFalse(try MotoBLEProtocolCodec(maximumFrameSize: 182)
+            .encodeMapScene(clear.makeBLEInput()).isEmpty)
+    }
+
     func testCoordinatorRefreshesOnlyAfterOneHundredMetres() throws {
         let document = try loadDocument()
         let coordinator = OfflineMapSceneCoordinator(

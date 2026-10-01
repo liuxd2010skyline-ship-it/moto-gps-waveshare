@@ -12,7 +12,7 @@
 
 ## 原作者机制优先的实施决定
 
-目标效果是原作者圆屏上的真实周边道路、建筑与高亮路线；原理固定为「手机取得并整理地图几何 → BLE 发送局部 `MapScene` → ESP32/LVGL 自行绘制」。不以传输地图截图、屏幕镜像或重做手机预览替代这条主链。已核对当前分支与原作者上游：`platforms/esp32`、`shared/ble_protocol`、`shared/nav_core`、`shared/offline_map` 的目录树完全相同；`shared/nav_ui` 仅抽取同值样式常量并加入下缘渐变，几何与 BLE 绘图流程沿用。
+目标效果是原作者圆屏上的真实周边道路、建筑与高亮路线；原理固定为「手机取得并整理地图几何 → BLE 发送局部 `MapScene` → ESP32/LVGL 自行绘制」。不以传输地图截图、屏幕镜像或重做手机预览替代这条主链。已核对当前分支与原作者上游：`platforms/esp32` 的编译和绘图源码、`shared/ble_protocol`、`shared/nav_core`、`shared/offline_map` 未因本轮准备而修改；固件 README 只新增当前安装入口。`shared/nav_ui` 仅抽取同值样式常量并加入下缘渐变，几何与 BLE 绘图流程沿用。
 
 创新点是手机侧的可替换「局部场景编译器」：国内获准使用的数据接口只提供真实道路、建筑、绿地、水域几何；编译器统一坐标、按视野裁剪、按屏幕分辨率简化、按 BLE 容量排序，并附来源及时效元数据。先用现有 `MapScene 0x14` 打通道路与建筑；地物填色才使用兼容的新版本。路线与转向消息优先发送，周边场景低频更新，弱网时只能沿用许可允许的缓存或明确标记无底图。
 
@@ -29,11 +29,11 @@
 ## 硬件到货前的准备清单
 
 - [x] 保存第二阶段成功的 iPhone IPA、构建链接、源码提交与 SHA-256，作为可回退基线。手机端已经实测通过；这不等于 ESP32 已验收。
-- [ ] 在 GitHub CI 或本机准备 ESP-IDF 5.5.5，编译当前 `platforms/esp32` 固件并保存 bootloader、分区表、应用镜像和烧录参数。2026-10-01 本机普通 PowerShell 尚未找到 `idf.py`、CMake 或 Ninja，因此不能声称已本地编译；可优先让 CI 构建，免去购买者提前配置复杂工具链。
-- [ ] 用共享协议的固定样本和现有 `MapScene 0x14` 验证道路/建筑场景编码、裁剪、坐标及旧版固件容量；无实板阶段只作为软件验证，不算显示/功耗/BLE 真机验收。
+- [x] GitHub CI 用 ESP-IDF 5.5.5 编译当前 `platforms/esp32`：[成功的固件构建](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/36812354053) 已生成 bootloader、分区表、应用镜像、`flasher_args.json`、`flash_project_args`、`sdkconfig` 和逐文件 SHA-256。固件 ZIP 已在本地 `build/phase3/` 保存，ZIP SHA-256 为 `64a1a206237983e0b88bc9e2457149aea6830a24977b8ed9279ef4e85ee97fcc`，七个内含文件的摘要均已复算通过。构建源码为 `5dce4829719d468f5496e60f3268a4eba2e083ec`；尚未对实体板刷写或启动。
+- [x] 共享协议固定样本、`MapScene 0x14` 的满容量分片/重组、道路建筑原子替换和清空、绘图稳定性均在 [Source checks](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/36812354054) 通过；这只是软件验证，不算显示、功耗或 BLE 真机验收。
 - [ ] 第一个实际骑行测试区域已选定为北京市海淀区；需核实国内正式要素接口能否取得道路及地物真实几何，以及圆屏重绘、额度、可用缓存、署名要求。公开资料的核查与咨询稿见 [北京海淀区数据源核查](BEIJING_HAIDIAN_MAP_SOURCE_REVIEW.md)。未获得许可和样本时不接入地图底图。
-- [ ] 更新过时的微雪 DIY 教程：现有正文仍按高德网关和 Mac/Xcode 安装写，必须另列本项目当前百度 iPhone IPA、Windows 下的固件备份/烧录路径，避免用户照旧步骤走回头路。
-- [ ] 到货后的操作清单提前备好，但不预先执行：核对完整 `1.75C` 型号及 32 MB Flash，测试出厂程序，读取安全状态，备份该台设备完整 Flash，再刷本项目固件并验证 BLE/圆屏。USB-C 必须支持数据传输。
+- [x] 已新增 [Windows 到货操作卡](WAVESHARE_1_75C_ARRIVAL_CHECKLIST.md)，旧版微雪 DIY 教程也已标为历史安装流程，防止误走高德网关或 Mac/Xcode 路线。
+- [x] 到货后的操作清单已备好：核对完整 `1.75C` 型号及 32 MB Flash，测试出厂程序，读取安全状态，备份该台设备完整 Flash，再刷本项目固件并验证 BLE/圆屏。USB-C 必须支持数据传输；这些实体步骤仍待到货执行。
 
 ## 必须先过的两道门槛
 
