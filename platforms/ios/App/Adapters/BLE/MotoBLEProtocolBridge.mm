@@ -10,7 +10,7 @@
 
 namespace {
 
-NSString *const kMotoBLEErrorDomain = @"org.example.motogps.ble-protocol";
+NSString *const kMotoBLEErrorDomain = @"com.liuxd2010skyline.motogps.ble-protocol";
 
 NSError *ProtocolError(moto::ble::Error error, std::size_t offset = 0) {
   NSString *message = [NSString stringWithFormat:@"BLE v1: %s (offset %zu)",

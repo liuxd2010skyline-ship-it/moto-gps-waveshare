@@ -28,12 +28,13 @@ ESP-IDF 依赖版本记录在 `platforms/esp32/dependencies.lock`。
 Web 构建使用 Emscripten / SDL，相关工具链及运行时亦保留其原始许可证。
 重新生成字体所需 `lv_font_conv` 由其发布方许可；本仓库不重新授权该工具。
 
-高德、Apple Music、Apple MapKit 是外部服务/SDK，不包含在项目许可证授权范围内。
+百度地图 iOS SDK 7.2.0、Apple Music 是外部服务/SDK，不包含在项目许可证授权范围内。
 请使用自己的合法账号、Key、配额并核对服务协议及硬件展示场景的授权要求。
-本仓库不附带高德 API 原始响应缓存、地图瓦片、Apple Music 音乐文件或专有 SDK 副本。
+本仓库不附带百度地图 API 原始响应缓存、地图瓦片、Apple Music 音乐文件或专有 SDK 副本。
+iOS 构建通过 CocoaPods 下载百度地图 SDK；官方隐私政策见 <https://lbs.baidu.com/pages/privacy/>。
 `backend/fixtures` 是自动测试样例，不是可用于导航的服务数据。
 
-MOTO GPS 是独立开发项目，不代表 Waveshare、Garmin、Apple 或高德的官方产品、认证或背书。
+MOTO GPS 是独立开发项目，不代表 Waveshare、Garmin、Apple 或百度地图的官方产品、认证或背书。
 
 ## 硬件与技术方案参考材料
 

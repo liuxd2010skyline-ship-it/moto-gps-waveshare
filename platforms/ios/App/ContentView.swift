@@ -1,3 +1,4 @@
+import MotoNavigationCore
 import SwiftUI
 
 enum MotoScreen: Hashable {
@@ -13,8 +14,10 @@ struct ContentView: View {
     @Environment(\.openURL) private var openURL
     @FocusState private var searchFocused: Bool
     @State private var showsDeviceDetails = false
-    @State private var showsMapDownloads = false
     @State private var showsDataUse = false
+    @State private var showsBaiduSetup = false
+    @AppStorage(BaiduMapSetup.privacyKey) private var baiduPrivacyAccepted = false
+    @AppStorage(BaiduMapSetup.akKey) private var baiduAK = ""
 
     var body: some View {
         NavigationStack(path: navigationPath) {
@@ -35,15 +38,14 @@ struct ContentView: View {
             if active { searchFocused = false }
         }
         .sheet(isPresented: $showsDeviceDetails) { deviceDetails }
-        .sheet(isPresented: $showsMapDownloads) {
-            MapDownloadsView(
-                store: model.surroundingMap,
-                gatewayBaseURL: model.mapGatewayBaseURL,
-                route: model.mapDownloadRoute,
-                destinationName: model.selectedPlace?.name
-            )
-        }
         .sheet(isPresented: $showsDataUse) { DataUseView() }
+        .sheet(isPresented: $showsBaiduSetup) {
+            BaiduMapSetupView()
+                .interactiveDismissDisabled(!baiduPrivacyAccepted || baiduAK.isEmpty)
+        }
+        .onAppear {
+            if !baiduPrivacyAccepted || baiduAK.isEmpty { showsBaiduSetup = true }
+        }
     }
 
     // Derive the stack from the session instead of synchronizing two mutable
@@ -92,12 +94,15 @@ struct ContentView: View {
                 }
                 Section {
                     deviceSummaryButton
-                    mapDownloadsButton
                     demoButton
                 } footer: {
                     Text("连接圆屏后，导航指引会自动同步。")
                 }
                 Section {
+                    Button { showsBaiduSetup = true } label: {
+                        Label("百度地图配置", systemImage: "key")
+                            .foregroundStyle(Color.primary)
+                    }
                     Button { showsDataUse = true } label: {
                         Label("隐私与数据", systemImage: "hand.raised")
                             .foregroundStyle(Color.primary)
@@ -266,20 +271,6 @@ struct ContentView: View {
 
     // MARK: - Route selection
 
-    private var mapDownloadsButton: some View {
-        Button { showsMapDownloads = true } label: {
-            Label {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("地图与离线下载").foregroundStyle(Color.primary)
-                    Text("自动加载周边，也能提前保存城市和沿途地图")
-                        .font(.subheadline).foregroundStyle(Color.secondary)
-                }
-            } icon: { Image(systemName: "map").foregroundStyle(.blue) }
-            .padding(.vertical, 5)
-        }
-        .accessibilityIdentifier("map-downloads-button")
-    }
-
     private var routePreviewScreen: some View {
         List {
             if let place = model.selectedPlace {
@@ -300,13 +291,27 @@ struct ContentView: View {
                     Label("从我的位置出发", systemImage: "location.fill").textCase(nil)
                 }
 
+                Section("出行方式") {
+                    Picker("路线类型", selection: Binding(
+                        get: { model.selectedTravelMode },
+                        set: { model.selectTravelMode($0) }
+                    )) {
+                        Text("驾车参考").tag(RouteMode.driving)
+                        Text("自行车").tag(RouteMode.cycling)
+                        Text("电动自行车").tag(RouteMode.electricBicycle)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("route-travel-mode")
+                }
+
                 if model.isPlanningRoutePreview {
                     Section {
                         HStack(spacing: 14) {
                             ProgressView()
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("正在规划路线")
-                                Text("获取当前位置与路况…")
+                                Text(model.selectedTravelMode == .driving
+                                     ? "获取当前位置与路况…" : "获取当前位置与骑行路线…")
                                     .font(.subheadline)
                                     .foregroundStyle(Color.secondary)
                             }
@@ -332,9 +337,15 @@ struct ContentView: View {
                     } header: {
                         Text("选择路线")
                     } footer: {
-                        Text("高德驾车路线 · 预计时间会随路况变化")
+                        Text(model.selectedTravelMode == .driving
+                             ? "百度驾车路线 · 优先避开高速 · 非摩托车专用"
+                             : "百度骑行路线 · 与驾车路线不同 · 请遵守当地通行规定")
                     }
-                    Section { mapDownloadsButton }
+                    Section {
+                        Label("路线由百度地图提供；此处仅绘制路线示意", systemImage: "info.circle")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 } else if let failure = model.routePreviewFailure {
                     Section {
                         ContentUnavailableView {
@@ -395,9 +406,11 @@ struct ContentView: View {
                             routeDistance(candidate)
                         }
                     }
-                    Label(candidate.trafficSummary, systemImage: "car.side")
-                        .font(.subheadline)
-                        .foregroundStyle(trafficTint(candidate))
+                    if model.selectedTravelMode == .driving {
+                        Label(candidate.trafficSummary, systemImage: "car.side")
+                            .font(.subheadline)
+                            .foregroundStyle(trafficTint(candidate))
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
@@ -409,7 +422,8 @@ struct ContentView: View {
             .contentShape(Rectangle())
         }
         .accessibilityIdentifier("route-option-\(candidate.ordinal)")
-        .accessibilityLabel("\(candidate.title)，\(candidate.durationText)，\(candidate.distanceText)，\(candidate.trafficSummary)")
+        .accessibilityLabel("\(candidate.title)，\(candidate.durationText)，\(candidate.distanceText)" +
+                            (model.selectedTravelMode == .driving ? "，\(candidate.trafficSummary)" : ""))
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
@@ -480,8 +494,6 @@ struct ContentView: View {
                 statusRow("手机定位", symbol: "location", value: locationStatus,
                           color: model.navigation.hasUsableFix ? .green : .secondary)
                 statusRow("路况", symbol: "car.side", value: trafficStatus, color: .secondary)
-                SurroundingMapStatusRow(store: model.surroundingMap)
-                Button("管理离线地图") { showsMapDownloads = true }
             }
             if model.isDemoActive {
                 Section {

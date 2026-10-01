@@ -11,6 +11,7 @@ final class SharedNavigationRuntime {
     private let bridge = MotoNavCoreBridge()
     private let locationSource: any NavigationLocationSource
     private let routeProvider: any NavigationRouteProviding
+    private let routeMode: RouteMode
     private var networkTasks: [UInt32: Task<Void, Never>] = [:]
     private var tickTask: Task<Void, Never>?
     private var activeRoute: ActiveRoute?
@@ -29,10 +30,12 @@ final class SharedNavigationRuntime {
 
     init(
         locationSource: any NavigationLocationSource,
-        routeProvider: any NavigationRouteProviding
+        routeProvider: any NavigationRouteProviding,
+        routeMode: RouteMode = .driving
     ) {
         self.locationSource = locationSource
         self.routeProvider = routeProvider
+        self.routeMode = routeMode
     }
 
     @discardableResult
@@ -129,6 +132,7 @@ final class SharedNavigationRuntime {
                         longitudeDeg: command.destinationLongitudeDeg,
                         latitudeDeg: command.destinationLatitudeDeg
                     ),
+                    routeMode: routeMode,
                     isReroute: command.reroute,
                     previousRouteID: bridge.snapshot.routeID.isEmpty
                         ? nil
@@ -152,10 +156,24 @@ final class SharedNavigationRuntime {
                     )
                     continue
                 }
+                if routeMode != .driving {
+                    // Baidu riding plans do not provide driving traffic segments.
+                    // Acknowledge the NavCore refresh without issuing a second
+                    // riding route request or presenting car traffic as cycling data.
+                    publish(bridge.acceptTraffic(
+                        forRouteID: activeRoute.plan.routeID,
+                        segments: [],
+                        remainingDurationS: bridge.snapshot.remainingDurationS,
+                        requestID: command.requestID,
+                        observedAtMs: Self.nowMs()
+                    ))
+                    continue
+                }
                 let request = RouteRequest(
                     requestID: command.requestID,
                     origin: activeRoute.origin,
                     destination: activeRoute.destination,
+                    routeMode: routeMode,
                     previousRouteID: activeRoute.plan.routeID,
                     destinationPOIID: activeRoute.destinationPOIID
                 )
@@ -217,7 +235,7 @@ final class SharedNavigationRuntime {
                       let self
                 else { return }
 
-                // AMap can choose a different route during a refresh. Its
+                // The route provider can choose a different route during a refresh. Its
                 // traffic offsets are unsafe for the currently displayed route
                 // unless the complete GCJ-02 polyline still matches exactly.
                 guard self.activeRoute?.plan.routeID == baseline.plan.routeID,

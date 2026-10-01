@@ -194,7 +194,7 @@ final class ESP32BLECentral: NSObject {
         #endif
     }
 
-    private static let restorationID = "org.example.motogps.central"
+    private static let restorationID = "com.liuxd2010skyline.motogps.central"
     private static let knownPeripheralKey = "MotoGPS.KnownPeripheralIdentifier"
     /// Keep the radio feed at the frozen v1 protocol ceiling of 5 Hz. The
     /// terminal interpolates heading/position locally at 40 Hz, so animation
