@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MOTO GPS · 圆屏环境光实验台</title>
+  <style>
+    :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #151a1d; color: #eef1f0; }
+    main { max-width: 1020px; margin: 0 auto; padding: 32px 22px 54px; }
+    h1 { margin: 0 0 8px; font-size: 25px; font-weight: 670; letter-spacing: -.03em; }
+    p { margin: 0; color: #aab6b9; line-height: 1.55; font-size: 14px; }
+    .lead { max-width: 810px; }
+    .workspace { display: grid; grid-template-columns: minmax(0, 466px) minmax(260px, 1fr); gap: 36px; align-items: center; margin-top: 25px; }
+    .stage { display: grid; place-items: center; }
+    #screen { display: block; width: min(466px, 100%); aspect-ratio: 1; filter: drop-shadow(0 23px 30px #0008); }
+    .panel { display: grid; gap: 21px; background: #1c2529; border: 1px solid #314044; border-radius: 22px; padding: 21px; }
+    .group { display: grid; gap: 9px; }
+    .group + .group { border-top: 1px solid #344045; padding-top: 19px; }
+    .group-title { font-size: 12px; font-weight: 700; color: #c4d0d1; letter-spacing: .06em; }
+    .row { display: flex; flex-wrap: wrap; gap: 7px; }
+    button { appearance: none; border: 1px solid #425055; background: #273237; color: #eef1f0; border-radius: 999px;
+      padding: 8px 12px; font: inherit; font-size: 12px; cursor: pointer; min-height: 36px; }
+    button:hover { background: #344249; }
+    button[aria-pressed="true"] { border-color: #bac9ca; background: #43545a; }
+    button:focus-visible, input:focus-visible { outline: 2px solid white; outline-offset: 3px; }
+    .slider { display: grid; gap: 4px; }
+    .slider label { display: flex; justify-content: space-between; color: #ccd5d5; font-size: 13px; }
+    .slider output { font-variant-numeric: tabular-nums; }
+    input[type="range"] { width: 100%; accent-color: #b7cace; cursor: pointer; }
+    .hint { font-size: 12px; color: #899b9f; }
+    .footer { display: grid; gap: 5px; margin-top: 23px; }
+    #status { color: #d1dcda; }
+    @media(max-width: 800px) { main { padding-inline: 16px; } .workspace { grid-template-columns: 1fr; gap: 25px; } .stage { max-width: 466px; margin: auto; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>MOTO GPS · 环境光实验台</h1>
+    <p class="lead">原版 V6/B 圆屏布局，466 × 466 像素。背景是非地理材质：数据少时承托路线，真实道路和建筑到达后仍留在同一底层。仅调整电脑预览，不会更改手机或实物屏幕。</p>
+    <div class="workspace">
+      <div class="stage"><canvas id="screen" width="466" height="466" role="img" aria-label="MOTO GPS 圆屏导航动态预览"></canvas></div>
+      <section class="panel" aria-label="预览调节">
+        <div class="group">
+          <div class="group-title">数据场景</div>
+          <div class="row" id="scenes">
+            <button data-scene="route-only" aria-pressed="true">仅有路线</button>
+            <button data-scene="roads-only" aria-pressed="false">道路到达</button>
+            <button data-scene="rich-fixture" aria-pressed="false">有限地物数据</button>
+            <button data-scene="full-design-fixture" aria-pressed="false">完整视觉目标</button>
+          </div>
+          <p class="hint" id="scene-note">最坏情况：只显示路线、车位箭头和下一指引。</p>
+        </div>
+        <div class="group">
+          <div class="group-title">环境光 · 电脑预览</div>
+          <div class="slider"><label for="intensity">存在感 <output id="intensity-value">62</output></label><input id="intensity" type="range" min="0" max="100" value="62"></div>
+          <div class="slider"><label for="speed">漂移速度 <output id="speed-value">75</output></label><input id="speed" type="range" min="0" max="100" value="75"></div>
+          <div class="slider"><label for="travel">移动幅度 <output id="travel-value">85</output></label><input id="travel" type="range" min="0" max="100" value="85"></div>
+          <p class="hint">柔光最多 4 组，随机缓慢出现、漂移和消失；路线、街道、箭头和 HUD 保持稳定。</p>
+        </div>
+        <div class="group">
+          <div class="group-title">设计稿色彩</div>
+          <p class="hint">统一使用 Soft Graphite 石墨色、象牙白路线与灰阶地物。预览直接呈现设计色值。</p>
+        </div>
+        <div class="group">
+          <div class="group-title">播放</div>
+          <div class="row">
+            <button id="actual" aria-pressed="true">1× 实时</button>
+            <button id="timelapse" aria-pressed="false">4× 观察</button>
+            <button id="event">模拟下一指引</button>
+            <button id="freeze" aria-pressed="false">暂停</button>
+            <button id="reduce" aria-pressed="false">减少动态</button>
+          </div>
+        </div>
+      </section>
+    </div>
+    <div class="footer">
+      <p id="status" role="status">正在绘制 1× 实时环境光…</p>
+      <p class="hint">“完整视觉目标”使用合成街区检验层级与美感；真实导航只绘制收到且校验通过的地物，不生成假建筑或限速。</p>
+    </div>
+  </main>
+  <script src="nav-design-palette.js"></script>
+  <script src="nav-code-ready-v1.js"></script>
+  <script src="nav-rgb565-preview.js"></script>
+  <script>
+    const canvas = document.getElementById("screen");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const source = document.createElement("canvas");
+    source.width = source.height = 466;
+    const sourceCtx = source.getContext("2d", { willReadFrequently: true });
+    const status = document.getElementById("status");
+    const sceneNote = document.getElementById("scene-note");
+    const notes = {
+      "route-only": "最坏情况：只显示路线、车位箭头和下一指引。",
+      "roads-only": "合成道路测试：环境光仍在道路下方，路线与车位箭头固定。",
+      "rich-fixture": "合成的有限地物样例：少量建筑、道路和经验证的限速。",
+      "full-design-fixture": "合成密集街区的完整视觉目标；建筑数量超过现有 16 个/包上限，尚不能视为实地能力。"
+    };
+    const sliders = ["intensity", "speed", "travel"];
+    const stored = (() => { try { return JSON.parse(localStorage.getItem("moto-ambient-preview-v2") || "{}"); } catch { return {}; } })();
+    const settings = NavCodeReadyV1.normalizeAmbientSettings({
+      intensity: stored.intensity ?? 62, speed: stored.speed ?? 75, travel: stored.travel ?? 85,
+      seed: crypto.getRandomValues(new Uint32Array(1))[0]
+    });
+    sliders.forEach(name => {
+      const input = document.getElementById(name);
+      input.value = settings[name];
+      document.getElementById(`${name}-value`).value = settings[name];
+      input.addEventListener("input", () => {
+        settings[name] = Number(input.value);
+        document.getElementById(`${name}-value`).value = input.value;
+        try { localStorage.setItem("moto-ambient-preview-v2", JSON.stringify(settings)); } catch { /* local file can still run */ }
+        lastDraw = 0;
+      });
+    });
+    let snapshot = NavCodeReadyV1.demoSnapshot("route-only");
+    let colorMode = "rgb24";
+    let playbackRate = 1;
+    let ambient = NavCodeReadyV1.createAmbientController();
+    let visualClockMs = 0;
+    let frozen = false;
+    let reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let lastNow = performance.now();
+    let lastDraw = 0;
+    let rendering = false;
+    let manualFrame = false;
+    function pressed() {
+      document.getElementById("actual").setAttribute("aria-pressed", String(playbackRate === 1));
+      document.getElementById("timelapse").setAttribute("aria-pressed", String(playbackRate === 4));
+      document.getElementById("freeze").setAttribute("aria-pressed", String(frozen));
+      document.getElementById("reduce").setAttribute("aria-pressed", String(reduceMotion));
+    }
+    document.querySelectorAll("[data-scene]").forEach(button => button.onclick = () => {
+      snapshot = NavCodeReadyV1.demoSnapshot(button.dataset.scene);
+      document.querySelectorAll("[data-scene]").forEach(b => b.setAttribute("aria-pressed", String(b === button)));
+      sceneNote.textContent = notes[button.dataset.scene];
+      lastDraw = 0;
+    });
+    document.getElementById("actual").onclick = () => { playbackRate = 1; pressed(); };
+    document.getElementById("timelapse").onclick = () => { playbackRate = 4; pressed(); };
+    document.getElementById("freeze").onclick = () => { frozen = !frozen; pressed(); lastDraw = 0; };
+    document.getElementById("reduce").onclick = () => { reduceMotion = !reduceMotion; pressed(); lastDraw = 0; };
+    document.getElementById("event").onclick = () => {
+      snapshot.distanceToManeuverM = snapshot.distanceToManeuverM === 300 ? 180 : 300;
+      snapshot.routeGeneration = (snapshot.routeGeneration || 0) + 1;
+      lastDraw = 0;
+    };
+    pressed();
+    async function drawFrame(state) {
+      rendering = true;
+      try {
+        const svg = NavCodeReadyV1.buildSVG(snapshot, state.tSeconds,
+          state.eventAgeSeconds, reduceMotion, settings);
+        const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+        try {
+          const image = new Image();
+          await new Promise((resolve, reject) => {
+            image.onload = resolve;
+            image.onerror = () => reject(new Error("SVG image could not load"));
+            image.src = url;
+          });
+          sourceCtx.clearRect(0, 0, 466, 466);
+          sourceCtx.drawImage(image, 0, 0);
+        } finally { URL.revokeObjectURL(url); }
+        if (colorMode === "rgb24") {
+          ctx.clearRect(0, 0, 466, 466);
+          ctx.drawImage(source, 0, 0);
+        } else {
+          const pixels = sourceCtx.getImageData(0, 0, 466, 466);
+          ctx.putImageData(NavRGB565Preview.quantize(pixels, colorMode), 0, 0);
+        }
+        const phases = NavCodeReadyV1.ambientAt(state.tSeconds, state.eventAgeSeconds,
+          state.scene, reduceMotion, settings);
+        status.textContent = `${frozen ? "已暂停" : reduceMotion ? "减少动态" : playbackRate + "× 实时运行"} · ${state.scene} · 柔光 ${phases.length} / ${NavCodeReadyV1.ambientLimits.maxPatches} 组 · ${Math.round(state.tSeconds)} s`;
+        canvas.dataset.ready = "true";
+      } catch (error) {
+        status.textContent = `预览渲染失败：${error.message}`;
+        console.error(error);
+      } finally {
+        rendering = false;
+      }
+    }
+    // Reproducible native-resolution captures for design review and tests.
+    window.NavAmbientPreview = Object.freeze({
+      async renderAt(tSeconds, sceneName = "route-only", mode = "rgb24", seed = settings.seed) {
+        manualFrame = true;
+        settings.seed = seed >>> 0;
+        snapshot = NavCodeReadyV1.demoSnapshot(sceneName);
+        colorMode = mode;
+        const scene = NavCodeReadyV1.selectScene(snapshot);
+        await drawFrame({ scene, tSeconds, eventAgeSeconds: Infinity });
+      },
+      resume() { manualFrame = false; lastDraw = 0; }
+    });
+    function animate(now) {
+      const elapsed = Math.max(0, Math.min(.1, (now - lastNow) / 1000));
+      lastNow = now;
+      if (manualFrame) { requestAnimationFrame(animate); return; }
+      if (!frozen && !reduceMotion) visualClockMs += elapsed * playbackRate * 1000;
+      if (!rendering && (now - lastDraw >= 125 || lastDraw === 0)) {
+        const state = ambient.sample(snapshot, visualClockMs, reduceMotion);
+        lastDraw = now;
+        drawFrame(state);
+      }
+      requestAnimationFrame(animate);
+    }
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>

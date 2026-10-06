@@ -22,7 +22,9 @@ namespace {
 constexpr lv_color_t kBlack = MOTO_LV_COLOR(MOTO_MAP_BLACK);
 constexpr lv_color_t kWhite = MOTO_LV_COLOR(MOTO_MAP_ROUTE);
 constexpr lv_color_t kIce = MOTO_LV_COLOR(MOTO_MAP_ICE);
-constexpr lv_color_t kGraphite = MOTO_LV_COLOR(MOTO_MAP_ROUTE_SHADOW);
+constexpr lv_color_t kGraphite = MOTO_LV_COLOR(MOTO_MAP_LEGACY_GRAPHITE);
+constexpr lv_color_t kRouteUnderlay = MOTO_LV_COLOR(MOTO_MAP_ROUTE_SHADOW);
+constexpr lv_color_t kMarkerOutline = MOTO_LV_COLOR(MOTO_MAP_MARKER_OUTLINE);
 // Real surrounding roads need to remain legible on the AMOLED's true-black
 // background.  LV_OPA_70 is 70/255 (not 70 percent), which made the previous
 // road layer effectively disappear on the physical display.
@@ -32,7 +34,14 @@ constexpr lv_color_t kRoadMinor = MOTO_LV_COLOR(MOTO_MAP_ROAD_MINOR);
 constexpr lv_color_t kBuildingGray = MOTO_LV_COLOR(MOTO_MAP_BUILDING);
 constexpr lv_color_t kBuildingLandmark =
     MOTO_LV_COLOR(MOTO_MAP_BUILDING_LANDMARK);
-constexpr lv_color_t kBuildingOutline = LV_COLOR_MAKE(0x1B, 0x20, 0x22);
+constexpr lv_color_t kBuildingOutline = MOTO_LV_COLOR(MOTO_MAP_BUILDING_OUTLINE);
+constexpr lv_color_t kNavQuiet = MOTO_LV_COLOR(MOTO_MAP_NAV_TEXT_QUIET);
+constexpr lv_color_t kNavUnit = MOTO_LV_COLOR(MOTO_MAP_NAV_UNIT);
+constexpr lv_color_t kLimitRed = MOTO_LV_COLOR(MOTO_MAP_SPEED_LIMIT_RED);
+constexpr lv_color_t kLimitFace = MOTO_LV_COLOR(MOTO_MAP_SPEED_LIMIT_FACE);
+constexpr lv_color_t kLimitText = MOTO_LV_COLOR(MOTO_MAP_SPEED_LIMIT_TEXT);
+constexpr lv_color_t kProgressBase = MOTO_LV_COLOR(MOTO_MAP_PROGRESS_BASE);
+constexpr lv_color_t kProgressActive = MOTO_LV_COLOR(MOTO_MAP_PROGRESS_ACTIVE);
 constexpr lv_color_t kQuiet = LV_COLOR_MAKE(0x78, 0x7E, 0x7F);
 constexpr lv_color_t kSoft = LV_COLOR_MAKE(0xAE, 0xB2, 0xB0);
 constexpr lv_color_t kAmber = MOTO_LV_COLOR(MOTO_MAP_AMBER);
@@ -277,7 +286,7 @@ void draw_vehicle_marker(lv_event_t *event) {
         image.recolor_opa = LV_OPA_COVER;
         lv_draw_image(layer, &image, &area);
     };
-    draw_mask(&moto_marker_outline, kBlack);
+    draw_mask(&moto_marker_outline, kMarkerOutline);
     draw_mask(&moto_marker_face, kWhite);
 }
 
@@ -1406,7 +1415,7 @@ void set_navigation_guidance_visible(bool visible) {
 
 void update_nav_status(const moto_ui_state_t *state) {
     const char *text = "";
-    lv_color_t color = kQuiet;
+    lv_color_t color = kNavQuiet;
     if(ui.demo_active) {
         lv_label_set_text(ui.nav_status, "DEMO RIDE");
         lv_obj_set_style_text_color(ui.nav_status, kWhite, 0);
@@ -1475,7 +1484,7 @@ void update_navigation(const moto_ui_state_t *state) {
 
     lv_arc_set_value(ui.nav_progress,
                      std::min<int>(100, state->route_progress_percent));
-    lv_obj_set_style_arc_color(ui.nav_progress, kWhite, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(ui.nav_progress, kProgressActive, LV_PART_INDICATOR);
 
     if(state->speed_limit_kph > 0) {
         char limit[8];
@@ -1642,7 +1651,7 @@ void create_navigation_page() {
     lv_obj_set_size(ui.nav_route_shadow, MOTO_UI_CANVAS_WIDTH,
                     MOTO_NAV_MAP_BOTTOM_Y);
     lv_obj_set_style_line_width(ui.nav_route_shadow, px(MOTO_MAP_ROUTE_SHADOW_WIDTH), 0);
-    lv_obj_set_style_line_color(ui.nav_route_shadow, kGraphite, 0);
+    lv_obj_set_style_line_color(ui.nav_route_shadow, kRouteUnderlay, 0);
     lv_obj_set_style_line_rounded(ui.nav_route_shadow, true, 0);
     ui.nav_route = create_map_polyline(ui.nav_map, ui.nav_route_line);
     lv_obj_set_size(ui.nav_route, MOTO_UI_CANVAS_WIDTH,
@@ -1682,7 +1691,7 @@ void create_navigation_page() {
                         LV_EVENT_DRAW_MAIN_END, nullptr);
 
     ui.nav_distance = make_label(page, &moto_font_distance_56, kWhite, "300");
-    ui.nav_unit = make_label(page, &lv_font_montserrat_20, kQuiet, "m");
+    ui.nav_unit = make_label(page, &lv_font_montserrat_20, kNavUnit, "m");
 
     ui.nav_limit = lv_obj_create(page);
     lv_obj_set_size(ui.nav_limit, MOTO_NAV_SPEED_LIMIT_SIZE,
@@ -1693,13 +1702,13 @@ void create_navigation_page() {
     lv_obj_set_pos(ui.nav_limit, MOTO_NAV_SPEED_LIMIT_X,
                    MOTO_NAV_SPEED_LIMIT_Y);
     lv_obj_set_style_radius(ui.nav_limit, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(ui.nav_limit, kWhite, 0);
+    lv_obj_set_style_bg_color(ui.nav_limit, kLimitFace, 0);
     lv_obj_set_style_bg_opa(ui.nav_limit, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(ui.nav_limit, kRed, 0);
+    lv_obj_set_style_border_color(ui.nav_limit, kLimitRed, 0);
     lv_obj_set_style_border_width(ui.nav_limit, 5, 0);
     lv_obj_set_style_pad_all(ui.nav_limit, 0, 0);
     lv_obj_clear_flag(ui.nav_limit, LV_OBJ_FLAG_CLICKABLE);
-    ui.nav_limit_value = make_label(ui.nav_limit, &lv_font_montserrat_28, kBlack, "70");
+    ui.nav_limit_value = make_label(ui.nav_limit, &lv_font_montserrat_28, kLimitText, "70");
     lv_obj_center(ui.nav_limit_value);
 
     ui.nav_progress = lv_arc_create(page);
@@ -1713,9 +1722,9 @@ void create_navigation_page() {
     lv_obj_remove_style(ui.nav_progress, nullptr, LV_PART_KNOB);
     lv_obj_clear_flag(ui.nav_progress, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_arc_width(ui.nav_progress, 3, LV_PART_MAIN);
-    lv_obj_set_style_arc_color(ui.nav_progress, kGraphite, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(ui.nav_progress, kProgressBase, LV_PART_MAIN);
     lv_obj_set_style_arc_width(ui.nav_progress, 3, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(ui.nav_progress, kWhite, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(ui.nav_progress, kProgressActive, LV_PART_INDICATOR);
     lv_obj_move_to_index(ui.nav_progress, 0);
 
     // Connection lifecycle overlay. The composition follows the same circular

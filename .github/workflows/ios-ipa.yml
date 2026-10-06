@@ -29,7 +29,7 @@ jobs:
           set -euo pipefail
           # These are the reviewed Git tree IDs of the iOS and shared sources.
           expected_ios=14fa44decbda23e3487771897d635555e898de10
-          expected_shared=700eee616f3808bf9167a5d9b3655e7e4c8b6950
+          expected_shared=5500428a4e3e3d2050e61627a74fe1c503e8fffc
           actual_ios="$(git rev-parse HEAD:platforms/ios)"
           actual_shared="$(git rev-parse HEAD:shared)"
           printf 'Source commit: %s\niOS tree: %s\nShared tree: %s\n' \

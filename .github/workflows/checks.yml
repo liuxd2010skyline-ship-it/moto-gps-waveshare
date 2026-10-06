@@ -35,6 +35,10 @@ jobs:
         run: |
           node scripts/generate_jinan_demo_fixture.mjs --check
           node scripts/offline_map/validate_jinan_sqlite.mjs
+      - name: Verify round-screen design contract and shared palette
+        run: |
+          node scripts/preview/build_nav_palette.mjs --check
+          node design/nav-code-ready-v1.test.js
   swift-core:
     # This package imports Foundation/XCTest only. Run it on the installed
     # Ubuntu Swift toolchain so core checks do not wait for scarce macOS hosts.

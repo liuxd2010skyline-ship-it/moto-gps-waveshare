@@ -155,6 +155,33 @@ struct MapTransform {
   float cos_heading = 1.0F;
 };
 
+bool map_context_covers_origin(const NavSnapshot& snapshot) {
+  // Revision zero is the explicit legacy demo fixture, which has no MapScene
+  // envelope. Live scene metadata must be valid before either context layer
+  // can appear. No coordinate conversion belongs here: both origins are GCJ-02.
+  if (snapshot.map_scene_revision == 0) return true;
+  const auto valid = [](const Gcj02Point& point) {
+    return std::isfinite(point.latitude_deg) &&
+           std::isfinite(point.longitude_deg) &&
+           std::abs(point.latitude_deg) <= 90.0 &&
+           std::abs(point.longitude_deg) <= 180.0;
+  };
+  if (snapshot.map_scene_radius_m < 100 ||
+      snapshot.map_scene_radius_m > 1'500 ||
+      !valid(snapshot.map_scene_origin) ||
+      !valid(snapshot.route_view_origin)) {
+    return false;
+  }
+  const double north_m =
+      radians(snapshot.route_view_origin.latitude_deg -
+              snapshot.map_scene_origin.latitude_deg) * kEarthRadiusM;
+  const double east_m =
+      radians(snapshot.route_view_origin.longitude_deg -
+              snapshot.map_scene_origin.longitude_deg) * kEarthRadiusM *
+      std::cos(radians(snapshot.route_view_origin.latitude_deg));
+  return std::hypot(north_m, east_m) <= snapshot.map_scene_radius_m;
+}
+
 MapTransform map_transform(const NavSnapshot& snapshot) {
   const double finite_heading =
       std::isfinite(snapshot.heading_deg) ? snapshot.heading_deg : 0.0;
@@ -220,7 +247,8 @@ void project_road_context(const NavSnapshot& snapshot,
                           moto_ui_state_t& output) {
   output.road_point_count = 0;
   output.road_polyline_count = 0;
-  if (!snapshot.has_route_view || !snapshot.has_road_context ||
+  if (!snapshot.has_route_view || !map_context_covers_origin(snapshot) ||
+      !snapshot.has_road_context ||
       snapshot.road_context_point_count < 2 ||
       snapshot.road_context_polyline_count == 0) {
     return;
@@ -262,7 +290,8 @@ void project_building_context(const NavSnapshot& snapshot,
                               moto_ui_state_t& output) {
   output.building_point_count = 0;
   output.building_footprint_count = 0;
-  if (!snapshot.has_route_view || !snapshot.has_building_context ||
+  if (!snapshot.has_route_view || !map_context_covers_origin(snapshot) ||
+      !snapshot.has_building_context ||
       snapshot.building_context_point_count < 3 ||
       snapshot.building_context_footprint_count == 0) {
     return;

@@ -40,8 +40,8 @@ jobs:
               exit 1
             fi
           done <<'TREES'
-          platforms/esp32 05f3e8cef0240663f48f84c0ea8d1ce34207f352
-          shared 700eee616f3808bf9167a5d9b3655e7e4c8b6950
+          platforms/esp32 42fc38863d8583d9a31c8ea6e1086b5cca359b1a
+          shared 5500428a4e3e3d2050e61627a74fe1c503e8fffc
           config 430dd231ca944981ec68121e7e256e1e422226c1
           assets 55b49e3df4c135c684efb5f33b2017131ed96de4
           third_party/lvgl 85aa60d18b3d5e5588d7b247abf90198f07c8a63

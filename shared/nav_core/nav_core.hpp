@@ -111,6 +111,11 @@ struct NavSnapshot {
   std::uint8_t building_context_point_count = 0;
   std::uint8_t building_context_footprint_count = 0;
   std::uint32_t map_scene_revision = 0;
+  // MapScene is a geographic window, independent of a route generation.
+  // Keep its provider GCJ-02 origin/radius so the presenter can withdraw a
+  // retained window when navigation moves beyond its actual coverage.
+  Gcj02Point map_scene_origin;
+  std::uint16_t map_scene_radius_m = 0;
 
   std::string route_id;
   double route_progress_m = 0.0;

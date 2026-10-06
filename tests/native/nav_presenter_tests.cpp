@@ -406,6 +406,71 @@ void test_map_scale_does_not_jump_at_maneuver_distance_thresholds() {
   }
 }
 
+void test_live_map_coverage_is_geographic_and_independent_of_route() {
+  NavPresenter presenter;
+  NavSnapshot snapshot;
+  snapshot.state = NavState::Navigating;
+  snapshot.route_id = "first-route";
+  snapshot.has_route_view = true;
+  snapshot.route_view_origin = {39.96, 116.31};
+  snapshot.route_view_point_count = 2;
+  snapshot.route_view_points[0] = snapshot.route_view_origin;
+  snapshot.route_view_points[1] = {39.961, 116.31};
+  snapshot.map_scene_revision = 7;
+  snapshot.map_scene_origin = snapshot.route_view_origin;
+  snapshot.map_scene_radius_m = 500;
+  snapshot.has_road_context = true;
+  snapshot.road_context_point_count = 2;
+  snapshot.road_context_polyline_count = 1;
+  snapshot.road_context_polylines[0] = {0, 2};
+  snapshot.road_context_points[0] = {39.96, 116.31};
+  snapshot.road_context_points[1] = {39.961, 116.31};
+  snapshot.has_building_context = true;
+  snapshot.building_context_point_count = 3;
+  snapshot.building_context_footprint_count = 1;
+  snapshot.building_context_footprints[0] = {0, 3};
+  snapshot.building_context_points[0] = {39.9601, 116.3101};
+  snapshot.building_context_points[1] = {39.9601, 116.3102};
+  snapshot.building_context_points[2] = {39.9602, 116.3102};
+  presenter.update(snapshot);
+  CHECK(presenter.ui_state().road_polyline_count == 1);
+  CHECK(presenter.ui_state().building_footprint_count == 1);
+
+  // A reroute at the same location keeps valid independent geography.
+  snapshot.route_id = "second-route";
+  snapshot.route_generation = 8;
+  snapshot.route_view_origin.latitude_deg += 0.001;
+  snapshot.route_view_points[0] = snapshot.route_view_origin;
+  presenter.update(snapshot);
+  CHECK(presenter.ui_state().road_polyline_count == 1);
+  CHECK(presenter.ui_state().building_footprint_count == 1);
+
+  // Crossing the retained window removes both context layers, while the
+  // authoritative forward route continues to draw.
+  snapshot.route_view_origin.latitude_deg += 0.005;
+  snapshot.route_view_points[0] = snapshot.route_view_origin;
+  presenter.update(snapshot);
+  CHECK(presenter.ui_state().route_point_count == 2);
+  CHECK(presenter.ui_state().road_point_count == 0);
+  CHECK(presenter.ui_state().building_point_count == 0);
+
+  // A delayed Jinan window cannot become a Beijing background.
+  snapshot.map_scene_origin = {36.67, 117.13};
+  presenter.update(snapshot);
+  CHECK(presenter.ui_state().road_polyline_count == 0);
+  CHECK(presenter.ui_state().building_footprint_count == 0);
+
+  snapshot.map_scene_origin = snapshot.route_view_origin;
+  snapshot.map_scene_radius_m = 99;
+  presenter.update(snapshot);
+  CHECK(presenter.ui_state().road_polyline_count == 0);
+  snapshot.map_scene_radius_m = 500;
+  snapshot.map_scene_origin.latitude_deg =
+      std::numeric_limits<double>::quiet_NaN();
+  presenter.update(snapshot);
+  CHECK(presenter.ui_state().building_footprint_count == 0);
+}
+
 void test_missing_or_incomplete_geometry_stays_empty() {
   NavPresenter presenter;
   NavSnapshot snapshot;
@@ -490,6 +555,7 @@ int main() {
   test_real_road_context_uses_the_same_heading_up_transform();
   test_map_scene_classes_buildings_and_capacity_share_route_transform();
   test_map_scale_does_not_jump_at_maneuver_distance_thresholds();
+  test_live_map_coverage_is_geographic_and_independent_of_route();
   test_missing_or_incomplete_geometry_stays_empty();
   test_presenter_owns_road_name_storage();
 #ifdef MOTO_NAV_UI_TEST_STUB

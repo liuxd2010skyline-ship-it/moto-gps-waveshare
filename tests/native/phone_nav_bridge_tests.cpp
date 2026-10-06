@@ -564,6 +564,58 @@ void test_imu_presentation_preserves_40hz_phase_and_stale_course_is_ignored() {
   CHECK(moto::test::phone_nav_bridge_last_heading_deg() == before_stale);
 }
 
+void test_map_scene_bounds_reach_presenter_and_revisions_wrap() {
+  moto::test::reset_phone_nav_bridge_probe();
+  moto::nav::NavPresenter presenter;
+  PhoneNavBridge bridge(presenter);
+  bridge.on_link_state(true);
+  moto::ble::NavigationSnapshot navigation;
+  navigation.state = moto::ble::NavigationState::Navigating;
+  navigation.flags = moto::ble::NavigationHasRouteView;
+  navigation.route_token = 77;
+  navigation.route_generation = 1;
+  CHECK(bridge.on_message(make_message(navigation, 1)) == moto::ble::AckStatus::Ok);
+  moto::ble::RouteGeometry geometry;
+  geometry.route_token = 77;
+  geometry.route_generation = 1;
+  geometry.total_point_count = 2;
+  geometry.view_origin = {39'960'000, 116'310'000};
+  geometry.points = {geometry.view_origin, {39'961'000, 116'310'000}};
+  CHECK(bridge.on_message(make_message(geometry, 2)) == moto::ble::AckStatus::Ok);
+
+  moto::ble::MapScene scene;
+  scene.scene_revision = 0xFFFFFFFEU;
+  scene.view_origin = geometry.view_origin;
+  scene.radius_m = 500;
+  scene.roads = {{moto::ble::MapRoadClass::Primary, geometry.points}};
+  CHECK(bridge.on_message(make_message(scene, 3)) == moto::ble::AckStatus::Ok);
+  pump(bridge);
+  CHECK(presenter.ui_state().road_polyline_count == 1);
+
+  // Preserve wrap semantics without accepting an old high-valued scene.
+  scene.scene_revision = 1;
+  scene.roads[0].road_class = moto::ble::MapRoadClass::Service;
+  CHECK(bridge.on_message(make_message(scene, 4)) == moto::ble::AckStatus::Ok);
+  pump(bridge);
+  CHECK(presenter.ui_state().map_scene_revision == 1);
+  scene.scene_revision = 0xFFFFFFFEU;
+  CHECK(bridge.on_message(make_message(scene, 5)) == moto::ble::AckStatus::Duplicate);
+
+  // The metadata from the BLE envelope must affect the actual UI, not just
+  // exist in a header. Out-of-area context stays hidden under a valid route.
+  scene.scene_revision = 2;
+  scene.view_origin = {36'670'000, 117'130'000};
+  scene.roads[0].points = {scene.view_origin, {36'671'000, 117'130'000}};
+  CHECK(bridge.on_message(make_message(scene, 6)) == moto::ble::AckStatus::Ok);
+  pump(bridge);
+  CHECK(presenter.ui_state().route_point_count == 2);
+  CHECK(presenter.ui_state().road_polyline_count == 0);
+  bridge.on_link_state(false);
+  pump(bridge);
+  scene.scene_revision = 1;
+  CHECK(bridge.on_message(make_message(scene, 7)) == moto::ble::AckStatus::Ok);
+}
+
 }  // namespace
 
 int main() {
@@ -576,6 +628,7 @@ int main() {
   test_ios_demo_token_attaches_context_and_live_route_clears_it();
   test_map_scene_atomically_replaces_roads_and_buildings_at_capacity();
   test_imu_presentation_preserves_40hz_phase_and_stale_course_is_ignored();
+  test_map_scene_bounds_reach_presenter_and_revisions_wrap();
 
   if (failures != 0) {
     std::cerr << failures << " phone navigation bridge checks failed\n";

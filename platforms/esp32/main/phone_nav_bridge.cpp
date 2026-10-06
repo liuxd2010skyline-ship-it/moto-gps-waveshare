@@ -161,6 +161,8 @@ void clear_map_context(moto::nav::NavSnapshot& output) {
   clear_road_context(output);
   clear_building_context(output);
   output.map_scene_revision = 0;
+  output.map_scene_origin = {};
+  output.map_scene_radius_m = 0;
 }
 
 moto::nav::RoadContextClass map_road_class(
@@ -810,9 +812,14 @@ moto::ble::AckStatus PhoneNavBridge::consume_map_scene(
     // A MapScene is a complete window replacement. Retransmitted or delayed
     // older windows must not roll the display back after the rider has crossed
     // into a newer offline-map tile.
-    if (target.map_scene_revision != 0 &&
-        input.scene_revision <= target.map_scene_revision) {
-      return moto::ble::AckStatus::Duplicate;
+    if (target.map_scene_revision != 0) {
+      // UInt32 revisions wrap on the phone. Serial-number arithmetic accepts
+      // the next wrapped revision but still rejects duplicates and old frames.
+      const std::uint32_t advance =
+          input.scene_revision - target.map_scene_revision;
+      if (advance == 0 || advance >= 0x80000000U) {
+        return moto::ble::AckStatus::Duplicate;
+      }
     }
 
     // The decoder has already validated every class, point count and GCJ-02
@@ -863,6 +870,11 @@ moto::ble::AckStatus PhoneNavBridge::consume_map_scene(
     target.building_context_footprint_count =
         static_cast<std::uint8_t>(next_building);
     target.has_building_context = next_building > 0;
+    target.map_scene_origin = {
+        static_cast<double>(input.view_origin.latitude_e6) / 1'000'000.0,
+        static_cast<double>(input.view_origin.longitude_e6) / 1'000'000.0,
+    };
+    target.map_scene_radius_m = input.radius_m;
     target.map_scene_revision = input.scene_revision;
   }
   ESP_LOGI(kTag,

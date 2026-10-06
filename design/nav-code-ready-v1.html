@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MOTO GPS · Code-ready V6/B reference</title>
+  <style>
+    html, body { margin: 0; width: 466px; height: 466px; overflow: hidden; background: #050708; }
+    #artboard { width: 466px; height: 466px; }
+    svg { display: block; width: 466px; height: 466px; }
+  </style>
+</head>
+<body>
+  <main id="artboard" aria-label="466 by 466 native display"></main>
+  <script src="nav-design-palette.js"></script>
+  <script src="nav-code-ready-v1.js"></script>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const scene = params.get("scene") || "route-only";
+    const data = NavCodeReadyV1.demoSnapshot(scene);
+    const distance = Number(params.get("distance"));
+    if (scene === "route-only" && Number.isFinite(distance) && distance >= 0 &&
+        params.has("distance")) data.distanceToManeuverM = distance;
+    const initialTime = Number(params.get("t")) || 0;
+    const still = params.get("still") === "1";
+    const reduceMotion = params.get("reduce-motion") === "1" ||
+      matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const eventDemo = params.get("event") === "1";
+    const eventAgeParam = Number(params.get("event-age"));
+    const initialEventAge = params.has("event-age") && Number.isFinite(eventAgeParam)
+      ? eventAgeParam : eventDemo ? 0 : Infinity;
+    const artboard = document.getElementById("artboard");
+    artboard.innerHTML = NavCodeReadyV1.buildSVG(data, initialTime,
+      initialEventAge, reduceMotion);
+    if (!still && !reduceMotion) {
+      const began = performance.now();
+      let lastDraw = 0;
+      function animate(now) {
+        if (now - lastDraw >= 125) {
+          const elapsed = (now - began) / 1000;
+          // Reconcile births and deaths as well as movement; patch IDs are
+          // persistent lifetime identities, not fixed array positions.
+          artboard.innerHTML = NavCodeReadyV1.buildSVG(data, initialTime + elapsed,
+            eventDemo ? elapsed : Infinity, false);
+          lastDraw = now;
+        }
+        requestAnimationFrame(animate);
+      }
+      requestAnimationFrame(animate);
+    }
+  </script>
+</body>
+</html>
