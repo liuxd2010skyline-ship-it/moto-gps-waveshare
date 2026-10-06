@@ -559,7 +559,6 @@ void NavCore::update_route_view(const Gcj02Point& position,
   // 24-point window ended inside residential exits, while stretching those
   // samples skipped close turns and drew diagonals across adjacent streets.
   // Retain provider corners with a bounded geometric error instead.
-  constexpr double kBehindRiderM = 55.0;
   constexpr double kMapRadiusM = 500.0;
   constexpr double kMaximumAheadM = 1'600.0;
   const double geometry_total_m = cumulative_distance_m_.back();
@@ -569,8 +568,10 @@ void NavCore::update_route_view(const Gcj02Point& position,
   const double geometry_progress_m =
       std::clamp(route_progress_m, 0.0, route_total_m) *
       geometry_total_m / route_total_m;
-  const double first_geometry_distance_m =
-      std::max(0.0, geometry_progress_m - kBehindRiderM);
+  // Only the untravelled route is a white guidance line. The old 55 m lookback
+  // created a visible white tail below the rider marker, even when the map
+  // itself was correct.
+  const double first_geometry_distance_m = geometry_progress_m;
   const double last_geometry_distance_m = std::min(
       geometry_total_m, geometry_progress_m + kMaximumAheadM);
   const auto point_at_geometry_distance = [this](double offset_m) {
@@ -627,7 +628,10 @@ void NavCore::update_route_view(const Gcj02Point& position,
   for (std::size_t i = 0; i < count; ++i) {
     view_.route_view_points[i] = candidates[indices[i]];
   }
-  view_.route_view_origin = position;
+  // The minimap follows the matched point on the selected route. This keeps
+  // the forward white line beneath the fixed rider marker without bridging a
+  // noisy raw GPS fix to an unrelated street.
+  view_.route_view_origin = candidates.front();
   view_.route_view_point_count = static_cast<std::uint8_t>(count);
   view_.has_route_view = count >= 2;
 }

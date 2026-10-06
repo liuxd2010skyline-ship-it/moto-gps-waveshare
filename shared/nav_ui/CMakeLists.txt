@@ -10,6 +10,8 @@ endif()
 
 add_library(moto_nav_ui STATIC
     assets/moto_font_nav_16.c
+    assets/moto_font_distance_56.c
+    assets/moto_nav_icons.c
     src/moto_nav_ui.cpp
 )
 

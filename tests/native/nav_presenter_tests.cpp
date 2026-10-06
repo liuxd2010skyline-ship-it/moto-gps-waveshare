@@ -1,4 +1,5 @@
 #include "moto_nav_presenter.hpp"
+#include "moto_nav_visual_geometry.h"
 
 #ifdef MOTO_NAV_UI_TEST_STUB
 #include "moto_nav_ui_test_probe.hpp"
@@ -226,9 +227,8 @@ void test_heading_up_route_projection_keeps_rider_fixed() {
 
   const moto_ui_state_t& state = presenter.ui_state();
   CHECK(state.route_point_count == 2);
-  constexpr int rider_x = MOTO_UI_CANVAS_WIDTH / 2;
-  constexpr int rider_y =
-      (196 * MOTO_UI_CANVAS_HEIGHT + 180) / 360;
+  constexpr int rider_x = MOTO_NAV_RIDER_X;
+  constexpr int rider_y = MOTO_NAV_RIDER_Y;
   CHECK(state.route_points[0].x == rider_x);
   CHECK(state.route_points[0].y == rider_y);
   // Facing east means an eastbound route is drawn straight ahead/up while
@@ -252,9 +252,8 @@ void test_non_finite_heading_keeps_map_projection_finite() {
   const moto_ui_state_t& state = presenter.ui_state();
   CHECK(state.heading_deg == 0);
   CHECK(state.route_point_count == 2);
-  constexpr int rider_x = MOTO_UI_CANVAS_WIDTH / 2;
-  constexpr int rider_y =
-      (196 * MOTO_UI_CANVAS_HEIGHT + 180) / 360;
+  constexpr int rider_x = MOTO_NAV_RIDER_X;
+  constexpr int rider_y = MOTO_NAV_RIDER_Y;
   CHECK(state.route_points[0].x == rider_x);
   CHECK(state.route_points[0].y == rider_y);
 }

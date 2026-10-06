@@ -140,6 +140,12 @@ void test_lifecycle_and_arrival() {
   CHECK(view.speed_limit_kph == 50);
   CHECK(view.has_route_view);
   CHECK(view.route_view_point_count >= 2);
+  // The white route starts at the matched rider position. No 55 m of already
+  // travelled geometry may be sent to the round display as a bright tail.
+  CHECK(std::abs(view.route_view_origin.latitude_deg -
+                 view.route_view_points[0].latitude_deg) < 1e-9);
+  CHECK(std::abs(view.route_view_origin.longitude_deg -
+                 view.route_view_points[0].longitude_deg) < 1e-9);
   CHECK(view.route_view_point_count <= kRouteViewPointCapacity);
   CHECK(view.route_view_origin.latitude_deg == gcj02(kStart).latitude_deg);
 
@@ -150,6 +156,10 @@ void test_lifecycle_and_arrival() {
   CHECK(view.remaining_distance_m < 110.0);
   CHECK(view.has_route_view);
   CHECK(view.route_view_point_count >= 2);
+  CHECK(std::abs(view.route_view_origin.longitude_deg -
+                 view.route_view_points[0].longitude_deg) < 1e-9);
+  CHECK(std::abs(view.route_view_points[0].longitude_deg -
+                 gcj02(kMiddle).longitude_deg) < 1e-5);
 
   core.handle(GnssFixReceived{fix(kEnd, 300)});
   CHECK(core.snapshot().state == NavState::Navigating);

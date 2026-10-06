@@ -4,6 +4,7 @@
 // transitions and label/geometry residue cleanup.
 
 #include "moto_nav_ui.h"
+#include "moto_nav_visual_geometry.h"
 
 #include <lvgl.h>
 
@@ -11,6 +12,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -369,7 +371,7 @@ void test_motion_frames_interpolate_then_settle_without_residue() {
   const auto direct = capture();
   // Compare the map viewport. The page dots below it expire independently at
   // five seconds, which may fall between the two captured frames.
-  constexpr int map_height = (232 * kWidth + 180) / 360;
+  constexpr int map_height = MOTO_NAV_MAP_BOTTOM_Y;
   constexpr std::size_t map_bytes = kWidth * map_height * (LV_COLOR_DEPTH / 8);
   CHECK(std::equal(direct.bytes.begin(), direct.bytes.begin() + map_bytes,
                    settled_bytes.begin()));
@@ -413,6 +415,65 @@ void test_diagonal_map_pixels_are_independent_of_partial_buffer_height() {
   CHECK(draw_with_buffer(short_buffer) == tall_frame);
 }
 
+void test_native_visual_frame_and_concave_building() {
+  moto_nav_ui_create();
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  auto state = base_state();
+  state.distance_to_maneuver_m = 300;
+  state.speed_limit_kph = 60;
+  state.traffic = MOTO_TRAFFIC_UNKNOWN;
+  state.route_point_count = 5;
+  state.route_points[0] = {MOTO_NAV_RIDER_X, MOTO_NAV_RIDER_Y};
+  state.route_points[1] = {MOTO_NAV_RIDER_X, 160};
+  state.route_points[2] = {220, 140};
+  state.route_points[3] = {320, 135};
+  state.route_points[4] = {350, 100};
+  state.building_point_count = 6;
+  state.building_points[0] = {30, 50};
+  state.building_points[1] = {140, 50};
+  state.building_points[2] = {140, 140};
+  state.building_points[3] = {90, 140};
+  state.building_points[4] = {90, 90};
+  state.building_points[5] = {30, 90};
+  state.building_footprint_count = 1;
+  state.building_footprints[0] = {0, 6, 0};
+  moto_nav_ui_set_state(&state);
+  pump(260);
+  const Frame frame = capture();
+  const auto pixel = [&frame](int x, int y) {
+    const std::size_t offset = (static_cast<std::size_t>(y) * kWidth + x) * 2;
+    return static_cast<std::uint16_t>(frame.bytes[offset]) |
+           static_cast<std::uint16_t>(frame.bytes[offset + 1] << 8);
+  };
+  // The supplied L-shaped footprint is solid while its concave recess is empty.
+  // Its triangle fill must not leave a visible diagonal through the material.
+  CHECK(pixel(50, 70) != pixel(50, 120));
+  CHECK(pixel(120, 120) == pixel(50, 70));
+  CHECK(pixel(110, 70) == pixel(120, 70));
+  CHECK(pixel(105, 80) == pixel(120, 70));
+  // The route may start under the vehicle, but may not leave a bright tail.
+  CHECK(pixel(MOTO_NAV_RIDER_X, 340) == pixel(MOTO_NAV_RIDER_X + 16, 340));
+
+  const char* capture_path = std::getenv("MOTO_NAV_CAPTURE_PPM");
+  if(capture_path != nullptr && capture_path[0] != '\0') {
+    std::ofstream out(capture_path, std::ios::binary);
+    out << "P6\n" << kWidth << ' ' << kHeight << "\n255\n";
+    for(int y = 0; y < kHeight; ++y) {
+      for(int x = 0; x < kWidth; ++x) {
+        const std::uint16_t color = pixel(x, y);
+        const char rgb[3] = {
+            static_cast<char>(((color >> 11) & 31) * 255 / 31),
+            static_cast<char>(((color >> 5) & 63) * 255 / 63),
+            static_cast<char>((color & 31) * 255 / 31),
+        };
+        out.write(rgb, 3);
+      }
+    }
+    CHECK(out.good());
+  }
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -440,6 +501,7 @@ int main(int argc, char **argv) {
   test_capacity_payloads_render_stably();
   test_motion_frames_interpolate_then_settle_without_residue();
   test_diagonal_map_pixels_are_independent_of_partial_buffer_height();
+  test_native_visual_frame_and_concave_building();
 
   // Terminal screens run last: they tear the full UI down.
   moto_nav_ui_show_boot_screen();

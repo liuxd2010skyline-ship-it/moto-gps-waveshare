@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 72" width="72" height="72" role="img" aria-label="SLIGHT LEFT navigation arrow">
+  <g fill="currentColor" color="#F5F6F3" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 60 V50 C18 43 21 40 25 36 L48 13" transform="translate(72 0) scale(-1 1)" stroke-linecap="butt" fill="none" stroke-width="8.6"/>
+    <polygon points="15.000,8.000 14.293,10.687 17.828,31.617 17.994,32.212 18.359,32.607 18.882,32.791 19.525,32.749 20.162,32.254 24.263,23.344 30.344,17.263 39.254,13.162 39.749,12.525 39.791,11.882 39.607,11.359 39.212,10.994 38.617,10.828 17.687,7.293 15.000,8.000"/>
+  </g>
+</svg>
