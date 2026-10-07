@@ -2,6 +2,8 @@
 
 #include "ble_nav_transport_nimble.h"
 #include "board_port.h"
+#include "device_power_policy.hpp"
+#include "device_settings.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_sleep.h"
@@ -60,6 +62,12 @@ void power_button_task(void*) {
         released_once = true;
         ESP_LOGI(kTag, "PWR ready: button released, hold detection armed");
       }
+      if (pressed_since_ms != 0 &&
+          moto::esp32::is_settings_short_press(now_ms - pressed_since_ms) &&
+          board_port_lock(100)) {
+        device_settings_toggle();
+        board_port_unlock();
+      }
       pressed_since_ms = 0;
       vTaskDelay(pdMS_TO_TICKS(20));
       continue;
@@ -75,6 +83,7 @@ void power_button_task(void*) {
     } else if (now_ms - pressed_since_ms >= kPowerHoldMs) {
       ESP_LOGI(kTag, "PWR held for 3 seconds; requesting shutdown");
       if (board_port_lock(UINT32_MAX)) {
+        device_settings_close();
         moto_nav_ui_show_power_off_screen();
         board_port_unlock();
       }
@@ -125,6 +134,8 @@ extern "C" void app_main(void) {
     vTaskDelete(nullptr);
     return;
   }
+
+  device_settings_load_preferences();
 
   if (lv_display_get_horizontal_resolution(display) != MOTO_DISPLAY_WIDTH ||
       lv_display_get_vertical_resolution(display) != MOTO_DISPLAY_HEIGHT ||
@@ -177,7 +188,9 @@ extern "C" void app_main(void) {
   presenter.apply_to_lvgl();
   moto_nav_ui_set_music_page_enabled(0);
   phone_bridge.install_ui_callbacks();
+  device_settings_create();
   board_port_unlock();
+  device_settings_start_monitor();
 
   if (!phone_bridge.start_renderer()) {
     ESP_LOGE(kTag, "UI renderer startup failed; BLE was not started");

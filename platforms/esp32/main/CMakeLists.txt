@@ -21,6 +21,7 @@ idf_component_register(
         "app_main.cpp"
         "ble_nav_transport_nimble.cpp"
         "board_port_waveshare_1_75c.cpp"
+        "device_settings.cpp"
         "motion_heading_sensor.cpp"
         "phone_nav_bridge.cpp"
         "${MOTO_SHARED_BLE_PROTOCOL_SOURCE}"

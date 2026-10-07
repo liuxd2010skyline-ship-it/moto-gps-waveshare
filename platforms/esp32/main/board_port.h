@@ -43,6 +43,22 @@ lv_display_t *board_port_get_display(void);
  */
 esp_err_t board_port_reveal_display(void);
 
+/** Set AMOLED brightness, clamped to 10..100 percent. Caller holds LVGL lock. */
+esp_err_t board_port_set_brightness(uint8_t percent);
+uint8_t board_port_get_brightness(void);
+
+typedef struct {
+  bool available;
+  bool present;
+  bool usb_power;
+  bool charging;
+  bool percent_valid;
+  uint8_t percent;
+} board_port_battery_t;
+
+/** Read AXP2101 outside the LVGL lock. Errors produce unavailable status. */
+esp_err_t board_port_read_battery(board_port_battery_t *status);
+
 /**
  * Lock LVGL for calls made outside the board-owned LVGL task.
  * timeout_ms == UINT32_MAX means wait indefinitely.
