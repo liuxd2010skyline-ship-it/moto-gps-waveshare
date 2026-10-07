@@ -15,6 +15,7 @@ struct BLEDeviceSnapshot: Equatable {
     var connection: Connection = .idle
     var negotiatedProtocol = "--"
     var lastCommandID: UInt16?
+    var mapTransferStatus = "尚未同步底图"
 }
 
 enum BLECommandDisposition: UInt8 {
@@ -124,56 +125,6 @@ enum BLEOutboundBatch {
     }
 }
 
-/// A queued map is not delivered until the terminal acknowledges its complete
-/// logical message. Retries are freshly encoded to preserve wire sequence order.
-struct BLEMapSceneDelivery {
-    private(set) var acknowledgedRevision: UInt32?
-    private(set) var pending: (revision: UInt32, sequence: UInt16, sentAtMs: UInt64?)?
-    private(set) var timeoutCount = 0
-
-    func shouldSend(revision: UInt32, queuedFrames: Int) -> Bool {
-        pending == nil && acknowledgedRevision != revision && queuedFrames <= 32 && timeoutCount < 3
-    }
-
-    mutating func sent(revision: UInt32, sequence: UInt16, nowMs: UInt64) {
-        pending = (revision, sequence, nowMs)
-    }
-
-    mutating func queued(revision: UInt32, sequence: UInt16) {
-        pending = (revision, sequence, nil)
-    }
-
-    mutating func lastFragmentWritten(nowMs: UInt64) {
-        guard let pending else { return }
-        self.pending = (pending.revision, pending.sequence, nowMs)
-    }
-
-    @discardableResult
-    mutating func acknowledge(sequence: UInt16, status: UInt8) -> Bool {
-        guard let pending, pending.sequence == sequence else { return false }
-        self.pending = nil
-        if status == 0 || status == 4 {
-            acknowledgedRevision = pending.revision
-            timeoutCount = 0
-        } else {
-            timeoutCount += 1
-        }
-        return true
-    }
-
-    mutating func expire(nowMs: UInt64) {
-        guard let pending, let sentAtMs = pending.sentAtMs, nowMs >= sentAtMs,
-              nowMs - sentAtMs >= 3_000 else { return }
-        self.pending = nil
-        timeoutCount += 1
-    }
-
-    mutating func queueWasDiscarded() {
-        pending = nil
-        acknowledgedRevision = nil
-    }
-}
-
 @MainActor
 final class ESP32BLECentral: NSObject {
     // UUIDs belong to the CoreBluetooth transport adapter; the byte format is
@@ -206,6 +157,7 @@ final class ESP32BLECentral: NSObject {
     /// one run-loop turn.
     private static let writeWithoutResponsePacingMs: UInt64 = 15
     private static let mapSceneCapability: UInt32 = 1 << 7
+    private static let denseMapSceneCapability: UInt32 = 1 << 8
 
     private struct RouteGeometrySignature: Equatable {
         let routeID: String
@@ -229,6 +181,8 @@ final class ESP32BLECentral: NSObject {
     private var pendingMediaState: PhoneMediaState?
     private var pendingMapScene: OfflineMapSceneWindow?
     private var mapSceneDelivery = BLEMapSceneDelivery()
+    private var negotiatedFrameSize = 20
+    private var mapTransferCounts = (roads: 0, buildings: 0)
     private var mapSceneFinalFrame: Data?
     private var shouldMaintainConnection = false
     private var protocolReady = false
@@ -552,12 +506,14 @@ final class ESP32BLECentral: NSObject {
             case let .sendPhoneReady(maximumFrameSize):
                 trace("received initial Device Ready; negotiated frame=\(maximumFrameSize)")
                 codec.setMaximumFrameSize(UInt(maximumFrameSize))
+                negotiatedFrameSize = maximumFrameSize
                 try sendHandshakeFrame(for: .awaitingFinalDeviceReady, codec: codec)
                 scheduleHandshakeTimeout(for: .awaitingFinalDeviceReady)
 
             case let .protocolReady(maximumFrameSize):
                 trace("received final Device Ready; protocol ready frame=\(maximumFrameSize)")
                 codec.setMaximumFrameSize(UInt(maximumFrameSize))
+                negotiatedFrameSize = maximumFrameSize
                 handshakeTask?.cancel()
                 handshakeTask = nil
                 protocolReady = true
@@ -683,6 +639,8 @@ final class ESP32BLECentral: NSObject {
         gattSetupInProgress = false
         snapshot.negotiatedProtocol = "--"
         snapshot.lastCommandID = nil
+        snapshot.mapTransferStatus = "尚未同步底图"
+        negotiatedFrameSize = 20
     }
 
     /// GATT discovery, subscription and write failures cannot recover while the
@@ -780,6 +738,7 @@ final class ESP32BLECentral: NSObject {
 
     private func scheduleNavigationTransmit() {
         guard protocolReady,
+              !mapSceneDelivery.isWritingFragments,
               codec != nil,
               pendingNavigationState != nil,
               navigationTransmitTask == nil
@@ -804,6 +763,7 @@ final class ESP32BLECentral: NSObject {
 
     private func flushPendingNavigationState() {
         guard protocolReady,
+              !mapSceneDelivery.isWritingFragments,
               let codec,
               let state = pendingNavigationState
         else { return }
@@ -858,6 +818,7 @@ final class ESP32BLECentral: NSObject {
 
     private func flushPendingMediaState() {
         guard protocolReady,
+              !mapSceneDelivery.isWritingFragments,
               let codec,
               let state = pendingMediaState
         else { return }
@@ -880,12 +841,22 @@ final class ESP32BLECentral: NSObject {
         else { return }
 
         do {
-            let frames = try codec.encodeMapScene(scene.makeBLEInput())
+            let window = scene.forTransmission(
+                denseBuildings: peerCapabilities & Self.denseMapSceneCapability != 0,
+                payloadBudget: BLEMapTransferBudget.payloadBytes(maximumFrameSize: negotiatedFrameSize)
+            )
+            let frames = try codec.encodeMapScene(window.makeBLEInput())
+            guard frames.count <= BLEMapTransferBudget.maximumFrames else {
+                trace("map exceeds negotiated fragment budget")
+                return
+            }
             let sequence = codec.lastEncodedSequence
             mapSceneDelivery.queued(revision: scene.revision, sequence: sequence)
             mapSceneFinalFrame = frames.last
+            mapTransferCounts = (window.roads.count, window.buildings.count)
+            snapshot.mapTransferStatus = "同步中 · \(window.roads.count) 条道路 · \(window.buildings.count) 栋建筑"
             try send(frames)
-            trace("map queued revision=\(scene.revision) roads=\(scene.roads.count) buildings=\(scene.buildings.count) frames=\(frames.count)")
+            trace("map queued revision=\(scene.revision) roads=\(window.roads.count) buildings=\(window.buildings.count) frames=\(frames.count)")
             // Keep the latest complete scene so a later BLE reconnection can
             // restore the map even when the motorcycle has not moved 100 m.
         } catch {
@@ -953,8 +924,8 @@ final class ESP32BLECentral: NSObject {
                     for: characteristic,
                     type: .withoutResponse
                 )
-                markMapFragmentWritten(frame)
                 lastWriteWithoutResponseAtMs = now
+                markMapFragmentWritten(frame)
                 if !outboundFrames.isEmpty {
                     scheduleWritePump(afterMs: Self.writeWithoutResponsePacingMs)
                 }
@@ -976,9 +947,13 @@ final class ESP32BLECentral: NSObject {
     }
 
     private func markMapFragmentWritten(_ frame: Data) {
-        guard frame == mapSceneFinalFrame else { return }
-        mapSceneFinalFrame = nil
-        mapSceneDelivery.lastFragmentWritten(nowMs: Self.monotonicMs())
+        if frame == mapSceneFinalFrame {
+            mapSceneFinalFrame = nil
+            mapSceneDelivery.lastFragmentWritten(nowMs: Self.monotonicMs())
+            scheduleNavigationTransmit()
+            flushPendingMediaState()
+        }
+        if outboundFrames.isEmpty { flushPendingMapScene() }
     }
 
     private func scheduleWritePump(afterMs delayMs: UInt64) {
@@ -1032,10 +1007,14 @@ final class ESP32BLECentral: NSObject {
 
                 do {
                     self.mapSceneDelivery.expire(nowMs: now)
-                    if self.mapSceneDelivery.timeoutCount >= 3 {
-                        self.recoverFromTransportError("周边地图传输未确认，正在重新连接")
-                        return
+                    if self.mapSceneDelivery.timeoutCount >= 3,
+                       self.snapshot.mapTransferStatus != "底图未确认 · 导航继续" {
+                        self.snapshot.mapTransferStatus = "底图未确认 · 导航继续"
                     }
+                    // Do not interleave logical messages or discard map
+                    // fragments. Keep only the latest navigation/media state
+                    // until this bounded map finishes writing.
+                    if self.mapSceneDelivery.isWritingFragments { continue }
                     try self.send(
                         codec.encodeHeartbeat(
                             withSessionID: self.sessionID,
@@ -1415,11 +1394,15 @@ extension ESP32BLECentral: @preconcurrency CBPeripheralDelegate {
             if let ack = inbound.acknowledgement {
                 if mapSceneDelivery.acknowledge(sequence: ack.acknowledgedSequence,
                                                 status: ack.status) {
-                    trace("map acknowledged sequence=\(ack.acknowledgedSequence) status=\(ack.status)")
-                    if mapSceneDelivery.timeoutCount >= 3 {
-                        recoverFromTransportError("周边地图连续接收失败，正在重新连接")
-                        return
+                    if ack.status == 0 || ack.status == 4 {
+                        snapshot.mapTransferStatus = "圆屏已接收 · \(mapTransferCounts.roads) 条道路 · \(mapTransferCounts.buildings) 栋建筑"
+                    } else if mapSceneDelivery.timeoutCount >= 3 {
+                        snapshot.mapTransferStatus = "底图未确认 · 导航继续"
                     }
+                    trace("map acknowledged sequence=\(ack.acknowledgedSequence) status=\(ack.status)")
+                    // Stop retrying this revision after three failures; a new
+                    // geographic window gets its own budget. A rejected map
+                    // must not repeatedly tear down a healthy navigation link.
                     flushPendingMapScene()
                 }
                 return

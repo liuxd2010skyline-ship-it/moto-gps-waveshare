@@ -6,6 +6,20 @@ enum MotoScreen: Hashable {
     case activeNavigation
 }
 
+private struct OfflineMapStatusSection: View {
+    @ObservedObject var store: SurroundingMapStore
+    let transferStatus: String
+
+    var body: some View {
+        Section("圆屏离线底图") {
+            LabeledContent("手机地图", value: store.statusText)
+            LabeledContent("发送状态", value: transferStatus)
+        } footer: {
+            Text("北京与济南道路、建筑来自 OpenStreetMap。缺少地物时仍显示导航路线；离线底图不代替百度路线规划。© OpenStreetMap contributors · ODbL 1.0")
+        }
+    }
+}
+
 /// One primary flow: destination → route → ride. Device management is secondary.
 struct ContentView: View {
     @ObservedObject var model: AppModel
@@ -636,6 +650,8 @@ struct ContentView: View {
                         Button("前往设置开启定位", action: openSystemSettings)
                     }
                 }
+                OfflineMapStatusSection(store: model.surroundingMap,
+                                        transferStatus: model.device.mapTransferStatus)
             }
             .navigationTitle("我的圆屏")
             .navigationBarTitleDisplayMode(.inline)

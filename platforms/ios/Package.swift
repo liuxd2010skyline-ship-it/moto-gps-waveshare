@@ -14,6 +14,10 @@ let package = Package(
     ],
     targets: [
         .target(name: "MotoNavigationCore"),
+        .systemLibrary(name: "CSQLite", pkgConfig: "sqlite3"),
+        .target(name: "MotoMapGeometry", dependencies: ["CSQLite"], path: "App/Adapters/OfflineMap",
+                exclude: ["OfflineMapSceneCoordinator.swift", "SurroundingMapStore.swift", "MapTilePlanner.swift"],
+                sources: ["OfflineMapScene.swift", "SQLiteOfflineMapSceneIndex.swift"]),
         .executableTarget(
             name: "MotoNavigationCoreChecks",
             dependencies: ["MotoNavigationCore"]
@@ -22,5 +26,6 @@ let package = Package(
             name: "MotoNavigationCoreTests",
             dependencies: ["MotoNavigationCore"]
         ),
+        .testTarget(name: "MotoMapGeometryTests", dependencies: ["MotoMapGeometry"]),
     ]
 )

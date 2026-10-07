@@ -30,6 +30,10 @@ targets:
         buildPhase: resources
       - path: ../../shared/offline_map/jinan-v1.sqlite
         buildPhase: resources
+      - path: ../../build/offline-maps/beijing-v1.sqlite
+        buildPhase: resources
+      - path: ../../build/offline-maps/beijing-v1.manifest.json
+        buildPhase: resources
       - path: ../../NOTICE
         buildPhase: resources
       - path: ../../LICENSE.md

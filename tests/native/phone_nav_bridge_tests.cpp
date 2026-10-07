@@ -480,7 +480,9 @@ void test_map_scene_atomically_replaces_roads_and_buildings_at_capacity() {
        ++building_index) {
     moto::ble::MapBuildingFootprint building;
     building.building_class = moto::ble::MapBuildingClass::Parking;
-    for (std::size_t point_index = 0; point_index < 8; ++point_index) {
+    for (std::size_t point_index = 0; point_index <
+         moto::ble::kMaxMapSceneBuildingPoints / moto::ble::kMaxMapSceneBuildings;
+         ++point_index) {
       building.points.push_back({
           geometry.view_origin.latitude_e6 +
               static_cast<std::int32_t>(building_index * 30 + point_index),

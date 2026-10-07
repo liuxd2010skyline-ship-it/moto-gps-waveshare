@@ -54,8 +54,8 @@ final class OfflineMapSceneTests: XCTestCase {
         XCTAssertFalse(window.buildings.isEmpty)
         XCTAssertLessThanOrEqual(window.roads.count, 24)
         XCTAssertLessThanOrEqual(window.roads.reduce(0) { $0 + $1.points.count }, 192)
-        XCTAssertLessThanOrEqual(window.buildings.count, 16)
-        XCTAssertLessThanOrEqual(window.buildings.reduce(0) { $0 + $1.points.count }, 128)
+        XCTAssertLessThanOrEqual(window.buildings.count, 48)
+        XCTAssertLessThanOrEqual(window.buildings.reduce(0) { $0 + $1.points.count }, 240)
     }
 
     func testBundledOSMSceneDecodesAndCropsRealFeatures() throws {
@@ -81,8 +81,8 @@ final class OfflineMapSceneTests: XCTestCase {
         XCTAssertFalse(window.buildings.isEmpty)
         XCTAssertLessThanOrEqual(window.roads.count, 24)
         XCTAssertLessThanOrEqual(window.roads.reduce(0) { $0 + $1.points.count }, 192)
-        XCTAssertLessThanOrEqual(window.buildings.count, 16)
-        XCTAssertLessThanOrEqual(window.buildings.reduce(0) { $0 + $1.points.count }, 128)
+        XCTAssertLessThanOrEqual(window.buildings.count, 48)
+        XCTAssertLessThanOrEqual(window.buildings.reduce(0) { $0 + $1.points.count }, 240)
     }
 
     func testSceneOutsideFixtureCoverageIsHonestEmptyWindow() throws {
@@ -164,6 +164,19 @@ final class OfflineMapSceneTests: XCTestCase {
         XCTAssertTrue(frames.allSatisfy { $0.count >= 4 && ($0[3] & 0x04) != 0 })
     }
 
+    func testNegotiatedTinyMtuBudgetMatchesActualSharedCodecPayload() throws {
+        let document = try loadDocument()
+        let scene = InMemoryOfflineMapSceneIndex(document: document).query(
+            around: document.viewOrigin, radiusM: 500, revision: 3)
+            .forTransmission(denseBuildings: true, payloadBudget: 768)
+        let codec = MotoBLEProtocolCodec(maximumFrameSize: 20)
+        let payload = try codec.encodeMapScenePayload(forTesting: scene.makeBLEInput())
+        XCTAssertEqual(payload.count, scene.encodedPayloadByteCount)
+        XCTAssertLessThanOrEqual(try codec.encodeMapScene(scene.makeBLEInput()).count, 96)
+        XCTAssertFalse(scene.roads.isEmpty)
+        XCTAssertFalse(scene.buildings.isEmpty)
+    }
+
     func testCapacitySelectionUsesVisualPriorityInsteadOfInputOrder() {
         let origin = OfflineMapPointE6(latitudeE6: 36_680_000, longitudeE6: 117_130_000)
         let smallBuilding = [
@@ -213,7 +226,7 @@ final class OfflineMapSceneTests: XCTestCase {
 
         XCTAssertEqual(window.roads.count, 24)
         XCTAssertTrue(window.roads.contains { $0.osmWayID == 999 })
-        XCTAssertEqual(window.buildings.count, 16)
+        XCTAssertEqual(window.buildings.count, 17)
         XCTAssertTrue(window.buildings.contains { $0.osmWayID == 999 })
     }
 
@@ -291,6 +304,7 @@ final class OfflineMapSceneTests: XCTestCase {
         defer { sqlite3_close(database) }
         let schema = """
         PRAGMA user_version=1;
+        PRAGMA application_id=0x4d475053;
         CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL) WITHOUT ROWID;
         INSERT INTO metadata VALUES('schema_version','1'),('coordinate_system','GCJ-02');
         CREATE TABLE roads(id INTEGER PRIMARY KEY,osm_way_id INTEGER,class INTEGER NOT NULL,

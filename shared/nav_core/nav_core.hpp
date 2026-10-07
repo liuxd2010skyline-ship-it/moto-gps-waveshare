@@ -17,8 +17,8 @@ constexpr std::size_t kRouteViewPointCapacity = 24;
 // verification fixture intentionally exercises both limits.
 constexpr std::size_t kRoadContextPointCapacity = 192;
 constexpr std::size_t kRoadContextPolylineCapacity = 24;
-constexpr std::size_t kBuildingContextPointCapacity = 128;
-constexpr std::size_t kBuildingContextFootprintCapacity = 16;
+constexpr std::size_t kBuildingContextPointCapacity = 240;
+constexpr std::size_t kBuildingContextFootprintCapacity = 48;
 
 enum class RoadContextClass : std::uint8_t {
   Motorway = 0,

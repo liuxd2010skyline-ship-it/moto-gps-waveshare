@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(SQLite3)
 import SQLite3
+#else
+import CSQLite
+#endif
 
 enum SQLiteOfflineMapError: Error, Equatable {
     case cannotOpen(Int32)
@@ -7,7 +11,7 @@ enum SQLiteOfflineMapError: Error, Equatable {
     case prepareFailed(Int32)
 }
 
-/// Read-only repository for a full-city `jinan-v1.sqlite` pack.
+/// Read-only repository for an MGPS v1 city pack.
 ///
 /// R-tree only narrows candidates. The shared in-memory selector performs the
 /// exact circular clip, visual-priority ordering and BLE capacity limits, so a
@@ -15,6 +19,8 @@ enum SQLiteOfflineMapError: Error, Equatable {
 final class SQLiteOfflineMapSceneIndex: OfflineMapSceneQuerying, @unchecked Sendable {
     private let database: OpaquePointer
     private let lock = NSLock()
+    private let coverage: (minimumLatitude: Int32, maximumLatitude: Int32,
+                           minimumLongitude: Int32, maximumLongitude: Int32)
 
     init(url: URL) throws {
         var handle: OpaquePointer?
@@ -32,8 +38,24 @@ final class SQLiteOfflineMapSceneIndex: OfflineMapSceneQuerying, @unchecked Send
         do {
             guard try Self.metadataValue("schema_version", database: handle) == "1",
                   try Self.metadataValue("coordinate_system", database: handle) == "GCJ-02",
-                  sqlite3_user_version(handle) == 1
+                  sqlite3_user_version(handle) == 1,
+                  try Self.scalarInt("PRAGMA application_id", database: handle) == 0x4d475053
             else { throw SQLiteOfflineMapError.invalidSchema }
+            var statement: OpaquePointer?
+            let sql = """
+            SELECT min(min_lat_e6), max(max_lat_e6), min(min_lon_e6), max(max_lon_e6)
+            FROM (SELECT min_lat_e6,max_lat_e6,min_lon_e6,max_lon_e6 FROM road_rtree
+                  UNION ALL SELECT min_lat_e6,max_lat_e6,min_lon_e6,max_lon_e6 FROM building_rtree)
+            """
+            guard sqlite3_prepare_v2(handle, sql, -1, &statement, nil) == SQLITE_OK,
+                  let statement else { throw SQLiteOfflineMapError.invalidSchema }
+            defer { sqlite3_finalize(statement) }
+            guard sqlite3_step(statement) == SQLITE_ROW,
+                  sqlite3_column_type(statement, 0) != SQLITE_NULL else {
+                throw SQLiteOfflineMapError.invalidSchema
+            }
+            coverage = (sqlite3_column_int(statement, 0), sqlite3_column_int(statement, 1),
+                        sqlite3_column_int(statement, 2), sqlite3_column_int(statement, 3))
         } catch {
             sqlite3_close(handle)
             throw error
@@ -42,6 +64,11 @@ final class SQLiteOfflineMapSceneIndex: OfflineMapSceneQuerying, @unchecked Send
 
     deinit {
         sqlite3_close(database)
+    }
+
+    func contains(_ origin: OfflineMapPointE6) -> Bool {
+        (coverage.minimumLatitude...coverage.maximumLatitude).contains(origin.latitudeE6) &&
+            (coverage.minimumLongitude...coverage.maximumLongitude).contains(origin.longitudeE6)
     }
 
     func query(
@@ -53,6 +80,10 @@ final class SQLiteOfflineMapSceneIndex: OfflineMapSceneQuerying, @unchecked Send
         defer { lock.unlock() }
 
         let radius = UInt16(max(500, min(800, radiusM)))
+        guard contains(origin) else {
+            return OfflineMapSceneWindow(revision: revision, origin: origin, radiusM: radius,
+                                         roads: [], buildings: [])
+        }
         let bounds = Self.queryBounds(origin: origin, radiusM: Double(radius))
         do {
             let roads = try loadRoadCandidates(bounds: bounds, origin: origin)
@@ -124,7 +155,9 @@ final class SQLiteOfflineMapSceneIndex: OfflineMapSceneQuerying, @unchecked Send
         Self.bind(bounds, origin: origin, to: statement)
 
         var result: [OfflineMapRoad] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
+        var step = sqlite3_step(statement)
+        while step == SQLITE_ROW {
+            defer { step = sqlite3_step(statement) }
             guard let points = Self.decodePoints(statement: statement, column: 2),
                   points.count >= 2
             else { continue }
@@ -135,6 +168,7 @@ final class SQLiteOfflineMapSceneIndex: OfflineMapSceneQuerying, @unchecked Send
                 points: points
             ))
         }
+        guard step == SQLITE_DONE else { throw SQLiteOfflineMapError.prepareFailed(step) }
         return result
     }
 
@@ -160,7 +194,9 @@ final class SQLiteOfflineMapSceneIndex: OfflineMapSceneQuerying, @unchecked Send
         Self.bind(bounds, origin: origin, to: statement)
 
         var result: [OfflineMapBuilding] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
+        var step = sqlite3_step(statement)
+        while step == SQLITE_ROW {
+            defer { step = sqlite3_step(statement) }
             guard let points = Self.decodePoints(statement: statement, column: 3),
                   points.count >= 3,
                   points.first != points.last
@@ -174,6 +210,7 @@ final class SQLiteOfflineMapSceneIndex: OfflineMapSceneQuerying, @unchecked Send
                 points: points
             ))
         }
+        guard step == SQLITE_DONE else { throw SQLiteOfflineMapError.prepareFailed(step) }
         return result
     }
 
@@ -207,6 +244,15 @@ final class SQLiteOfflineMapSceneIndex: OfflineMapSceneQuerying, @unchecked Send
               let value = sqlite3_column_text(statement, 0)
         else { return nil }
         return String(cString: value)
+    }
+
+    private static func scalarInt(_ sql: String, database: OpaquePointer) throws -> Int32 {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
+              let statement else { throw SQLiteOfflineMapError.invalidSchema }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else { throw SQLiteOfflineMapError.invalidSchema }
+        return sqlite3_column_int(statement, 0)
     }
 
     private static func bind(
@@ -244,7 +290,7 @@ final class SQLiteOfflineMapSceneIndex: OfflineMapSceneQuerying, @unchecked Send
         column: Int32
     ) -> [OfflineMapPointE6]? {
         let byteCount = Int(sqlite3_column_bytes(statement, column))
-        guard byteCount >= 8, byteCount.isMultiple(of: 8),
+        guard byteCount >= 8, byteCount <= 8 * 16_384, byteCount.isMultiple(of: 8),
               let raw = sqlite3_column_blob(statement, column)
         else { return nil }
         let bytes = raw.assumingMemoryBound(to: UInt8.self)
@@ -285,6 +331,21 @@ final class SQLiteOfflineMapSceneIndex: OfflineMapSceneQuerying, @unchecked Send
         case 2: "parking"
         default: "generic"
         }
+    }
+}
+
+struct OfflineMapRegionIndex: OfflineMapSceneQuerying {
+    let indexes: [SQLiteOfflineMapSceneIndex]
+
+    func query(around origin: OfflineMapPointE6, radiusM: UInt16,
+               revision: UInt32) -> OfflineMapSceneWindow {
+        // A region's extent selects the pack, not the current demo state.
+        // Never translate a different city's geometry into the rider's window.
+        guard let index = indexes.first(where: { $0.contains(origin) }) else {
+            return OfflineMapSceneWindow(revision: revision, origin: origin, radiusM: radiusM,
+                                         roads: [], buildings: [])
+        }
+        return index.query(around: origin, radiusM: radiusM, revision: revision)
     }
 }
 

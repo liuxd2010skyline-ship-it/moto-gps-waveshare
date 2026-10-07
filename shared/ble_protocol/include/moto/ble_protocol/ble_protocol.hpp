@@ -52,8 +52,8 @@ constexpr std::size_t kMaxTrafficSegments = 64;
 // remains on the phone; these limits bound ESP32 RAM and LVGL object counts.
 constexpr std::size_t kMaxMapSceneRoads = 24;
 constexpr std::size_t kMaxMapSceneRoadPoints = 192;
-constexpr std::size_t kMaxMapSceneBuildings = 16;
-constexpr std::size_t kMaxMapSceneBuildingPoints = 128;
+constexpr std::size_t kMaxMapSceneBuildings = 48;
+constexpr std::size_t kMaxMapSceneBuildingPoints = 240;
 
 struct ByteView {
   const std::uint8_t* data = nullptr;
@@ -273,6 +273,9 @@ enum Capability : std::uint32_t {
   CapabilityMusicCommands = 1U << 5U,
   CapabilityCommandAck = 1U << 6U,
   CapabilityMapScene = 1U << 7U,
+  // Same v1 wire layout; larger bounded window. Phones must keep the legacy
+  // 16/128 building budget unless the device advertises this capability.
+  CapabilityDenseMapScene = 1U << 8U,
 };
 
 struct ConnectionStatus {

@@ -176,16 +176,10 @@ MapScene full_map_scene_fixture() {
          value.view_origin.longitude_e6 + x},
         {value.view_origin.latitude_e6 + y + 52,
          value.view_origin.longitude_e6 + x + 16},
-        {value.view_origin.latitude_e6 + y + 52,
-         value.view_origin.longitude_e6 + x + 50},
         {value.view_origin.latitude_e6 + y + 35,
          value.view_origin.longitude_e6 + x + 66},
         {value.view_origin.latitude_e6 + y,
          value.view_origin.longitude_e6 + x + 66},
-        {value.view_origin.latitude_e6 + y - 17,
-         value.view_origin.longitude_e6 + x + 50},
-        {value.view_origin.latitude_e6 + y - 17,
-         value.view_origin.longitude_e6 + x + 16},
     };
     value.buildings.push_back(std::move(building));
   }

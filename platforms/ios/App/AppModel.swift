@@ -42,10 +42,11 @@ final class AppModel: ObservableObject {
     init() {
         liveRouteProvider = BaiduRouteProvider()
         placeProvider = BaiduPlaceProvider()
-        // Keep the bundled sample scene without calling the old map gateway.
+        // Real, source-labelled city geometry stays on the phone. No gateway
+        // or map-SDK extraction is required for the round-screen context.
         surroundingMap = SurroundingMapStore(
             baseURL: URL(string: "https://example.invalid/")!,
-            loader: { _ in throw URLError(.unsupportedURL) }
+            loader: { _ in throw URLError(.unsupportedURL) }, offlineOnly: true
         )
         recentPlaces = Self.loadRecentPlaces()
 
@@ -407,11 +408,10 @@ final class AppModel: ObservableObject {
                 self?.navigationFailure = nil
             }
             self?.bluetooth.sendNavigationSnapshot(snapshot)
-            // The bundled Jinan scene is an OSM demo fixture. Real Baidu
-            // navigation must not silently mix that source into the map.
-            // Keep the MapScene/LVGL pipeline for an authorized Chinese road
-            // source; the explicit demo still exercises the existing drawing.
-            if self?.isDemoActive == true, snapshot.hasRouteView {
+            // Route and source geometries are both already GCJ-02 here; never
+            // convert the provider route or bundled scene for a second time.
+            if snapshot.hasRouteView, snapshot.hasUsableFix,
+               self?.isNavigationActive == true {
                 self?.surroundingMap.update(
                     latitudeDeg: snapshot.routeViewOriginLatitudeDeg,
                     longitudeDeg: snapshot.routeViewOriginLongitudeDeg
