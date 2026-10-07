@@ -335,8 +335,11 @@ void test_map_scene_classes_buildings_and_capacity_share_route_transform() {
   }
   for (std::size_t index = 0;
        index < kBuildingContextFootprintCapacity; ++index) {
+    constexpr std::size_t points_per_building =
+        kBuildingContextPointCapacity / kBuildingContextFootprintCapacity;
     snapshot.building_context_footprints[index] = {
-        static_cast<std::uint8_t>(index * 8), 8,
+        static_cast<std::uint8_t>(index * points_per_building),
+        static_cast<std::uint8_t>(points_per_building),
         index == 0 ? BuildingContextClass::Landmark
                    : BuildingContextClass::Generic,
     };
