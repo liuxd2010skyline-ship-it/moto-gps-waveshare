@@ -10,6 +10,8 @@
 
 官方源：[北京提取页](https://download.geofabrik.de/asia/china/beijing.html)。固定源文件 `beijing-261004.osm.pbf`，保留来源 URL、PBF SHA-256、源时间、数据库 SHA-256、转换前后点数和覆盖范围。软件生成包不是对整个海淀实地测绘完整性的保证。
 
+现有 `BaiduMapBridge` 使用 `BMK_COORDTYPE_COMMON` 全局设置，按[百度 iOS 坐标转换文档](https://lbsyun.baidu.com/docs/ios?title=iossdk%2Fguide%2Ftool%2Fcoordinate)对应 GCJ-02 输入与返回。离线包、路线和车辆锚点因此在相同体系下叠加；最终仍以实地控制点核对位置，不能把类型一致当作测绘误差为零的证明。
+
 ### 构建
 
 需要 Node 24 和 Python + pyosmium 4.2.0。在仓库根运行：
@@ -41,7 +43,7 @@ python scripts/offline_map/prepare_beijing_pack.py
 - 验证框内的候选地物：中关村 334 条道路 / 427 个轮廓；五道口 467 / 420；上地 182 / 132。这是三个检查框的覆盖统计，不能当作整个海淀的数据完整率。
 - 使用生产 Swift 选择器查询中关村圆屏窗口，得到 24 条道路、39 个完整建筑，编码预算 1,334 bytes。较小 MTU 会继续按预算减少整条道路或整栋建筑，不切坏轮廓。
 - 生产 Swift 测试 23 项通过，其中 7 项为离线几何查询；[修正后的源码检查](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/37576996639)成功，原生 9 项测试通过。
-- [ESP32 固件构建](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/37576195659)成功并生成固件包；[iPhone 构建](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/37576195621)单独核对，绿色且存在 IPA 产物后才能用于更新手机。
+- [ESP32 固件构建](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/37576195659)成功并生成固件包。第一轮 iPhone 构建在新增设置区块的 SwiftUI `Section` 标题/页脚写法处失败；提交 `d18fd05b0cc5ea12cb475d45e2c3016fd14f770f` 已修正，手机源码树更新为 `85fbc2fd62c63493a635d0de25cb0f67b1721494`，固件及共享源树未变。[iPhone 复验构建](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/37578027914)单独核对，绿色且存在 IPA 产物后才能用于更新手机。
 
 ### 更新两端后的实机验收
 
