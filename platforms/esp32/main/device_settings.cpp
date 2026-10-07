@@ -176,8 +176,10 @@ void device_settings_create() {
   lv_obj_set_size(overlay, MOTO_DISPLAY_WIDTH, MOTO_DISPLAY_HEIGHT);
   lv_obj_set_style_bg_color(overlay, lv_color_black(), 0);
   lv_obj_set_style_bg_opa(overlay, LV_OPA_COVER, 0);
-  lv_obj_remove_flag(overlay, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_GESTURE_BUBBLE);
-  lv_obj_add_flag(overlay, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_HIDDEN);
+  lv_obj_remove_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_remove_flag(overlay, LV_OBJ_FLAG_GESTURE_BUBBLE);
+  lv_obj_add_flag(overlay, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(overlay, LV_OBJ_FLAG_HIDDEN);
   label("SETTINGS", 34, &lv_font_montserrat_28);
   label("BATTERY", 86, &lv_font_montserrat_16);
   battery_value = label("--", 109, &lv_font_montserrat_48);
