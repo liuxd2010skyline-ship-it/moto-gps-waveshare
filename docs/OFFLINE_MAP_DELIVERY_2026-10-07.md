@@ -43,7 +43,9 @@ python scripts/offline_map/prepare_beijing_pack.py
 - 验证框内的候选地物：中关村 334 条道路 / 427 个轮廓；五道口 467 / 420；上地 182 / 132。这是三个检查框的覆盖统计，不能当作整个海淀的数据完整率。
 - 使用生产 Swift 选择器查询中关村圆屏窗口，得到 24 条道路、39 个完整建筑，编码预算 1,334 bytes。较小 MTU 会继续按预算减少整条道路或整栋建筑，不切坏轮廓。
 - 生产 Swift 测试 23 项通过，其中 7 项为离线几何查询；[修正后的源码检查](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/37576996639)成功，原生 9 项测试通过。
-- [ESP32 固件构建](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/37576195659)成功并生成固件包。第一轮 iPhone 构建在新增设置区块的 SwiftUI `Section` 标题/页脚写法处失败；提交 `d18fd05b0cc5ea12cb475d45e2c3016fd14f770f` 已修正，手机源码树更新为 `85fbc2fd62c63493a635d0de25cb0f67b1721494`，固件及共享源树未变。[iPhone 复验构建](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/37578027914)单独核对，绿色且存在 IPA 产物后才能用于更新手机。
+- [ESP32 固件构建](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/37576195659)成功并生成固件包。第一轮 iPhone 构建在新增设置区块的 SwiftUI `Section` 标题/页脚写法处失败；提交 `d18fd05b0cc5ea12cb475d45e2c3016fd14f770f` 已修正，手机源码树更新为 `85fbc2fd62c63493a635d0de25cb0f67b1721494`，固件及共享源树未变。[iPhone 复验构建](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/37578027914)现已成功，包含北京离线包；2 份 CodeQL 报告中 6 个既有只读查询误报按固定源码逐项核对，阻断项 0，IPA 压缩结构检查通过。
+- iPhone 产物：`MotoGPS-checked-unsigned-IPA`，artifact ID `11464197042`，ZIP 46,657,394 bytes。ZIP SHA-256：`647c80e5bb2d07e49622fecc24f4b9f9fca089257172c17987e42d3a1593263a`；内含原始未签名 IPA SHA-256：`dd934937639718a35d539065e4feae3dbe1c67d21cb14970ae7970b0f0215561`。沿用此前签名侧载方法安装；签名后的文件摘要自然会改变。手机内置的北京 SQLite 摘要与上述独立地图包一致。
+- 固件产物：`MotoGPS-ESP32S3-1.75C-45d87f01a604fb66799ca047294c423cb63d7321`，artifact ID `11462202808`，ZIP SHA-256：`d8723538e3edbdb667b719e1e983bacb9652d0d60f39d85a3c72c4ab06cee190`。两端共享源树都是 `05c17fc911d61899539e0d881f337e612460191c`，可配套更新；数据和构建验收通过，实物验收仍未执行。
 
 ### 更新两端后的实机验收
 
