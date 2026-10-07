@@ -2,11 +2,13 @@
 
 日期：2026-10-06。状态：**浏览器参考可运行；V6 基础绘制已有固件构建，完整 B 状态与柔光尚未移植到 ESP32**。基准是用户选定的 B「Soft Graphite」质感、原 V6 转向箭头与既有 466 × 466 屏幕比例。目标导航标签为英文。下述「当前数据」以仓库源码为准，不把概念图中的街区当成北京实测数据。逐项完成情况见 [实现与构建审计](NAV_IMPLEMENTATION_AUDIT_2026-10-06.md)。
 
+2026-10-07 工程状态更新：OSM 北京离线包、真实导航本地查询及建筑传输已接入，云端数据与协议测试通过。新固件容量为 48 个建筑外轮廓 / 240 点，旧固件仍按能力协商使用 16 / 128；小 MTU 会进一步减少整栋建筑。详见 [本轮验证与两端更新记录](../docs/OFFLINE_MAP_DELIVERY_2026-10-07.md)。本契约的视觉尺寸、色板与行为保持原定标准；真实数据稀疏或缺失时仍使用相同降级规则。
+
 ## 电脑调节预览修订（当前）
 
 入口：[环境光实验台](nav-ambient-motion-demo.html)。新增存在感、速度和幅度三个 0–100 滑杆，电脑预览默认 `62 / 75 / 85`，设置保存在浏览器本地。它们仅影响背景材质；路线、V6 平底转向箭头、位置箭头、粗数字、英文标签、渐隐范围、细边缘和进度弧沿用同一渲染规则。背景先绘制，地物随后叠加，完整与稀疏场景共用同一光场。
 
-可切换仅路线、道路、有限地物和完整视觉目标四个场景。全部几何为合成测试数据；完整视觉目标有 100 个建筑，超过当前 MapScene 的 16 个/包上限，表达设计上限而非当前实地能力。不得把这个 fixture 发送到设备冒充地物。
+可切换仅路线、道路、有限地物和完整视觉目标四个场景。全部几何为合成测试数据；完整视觉目标有 100 个建筑，超过当前 MapScene 的 48 个外轮廓/包上限，表达设计上限而非当前实地能力。不得把这个 fixture 发送到设备冒充地物。
 
 柔光数量不固定，同时最多四组。随机确定出现时刻、位置、寿命和连续漂移参数，每帧不重新抽样。时钟 `rate = speed == 0 ? 0 : 0.3 + 0.014 * speed`，幅度乘 `travel / 65`。新柔光从接近透明缓缓出现，旧柔光缓缓消失；总 opacity ≤1.9，出生中心间距至少 68 px。正常/完整地物场景共用同一光场与时间，地物到达不重置动画。详细参数见第 5 节，旧版固定三组及“9 px / 1.25×”规则已被取代。
 
@@ -67,7 +69,7 @@ RGB565 直出/固定 8×8 有序抖动仍可通过测试接口导出，用于判
 | 5 | 无有效定位或 GNSS stale | `GPS_LOST` | 状态屏；严禁旧转向和旧距离 |
 | 6 | 下一动作/距离不可靠 | `WAITING_ROUTE` | 状态屏 |
 | 7 | 动作有效，但匹配的路线几何未到达 | `INSTRUCTION_ONLY` | 底部 V6 动作/距离，地图区显示小字 `MAP PREVIEW UNAVAILABLE`，无路线/车辆箭头 |
-| 8 | 匹配路线有效，道路与建筑都缺 | `ROUTE_ONLY` | **当前实地默认的重点画面**：白色真实前向路线、车辆箭头、无框英文 HUD |
+| 8 | 匹配路线有效，道路与建筑都缺 | `ROUTE_ONLY` | **底图缺失时的重点画面**：白色真实前向路线、车辆箭头、无框英文 HUD |
 | 9 | 有真实道路，无真实建筑 | `ROADS_ONLY` | 在同一版面逐条补上道路 |
 | 10 | 两类真实地物均有 | `RICH` | 与 B 稿相同材料、层级；密度只由数据决定 |
 
@@ -158,7 +160,7 @@ ESP32 实现应将原稿形体预烘焙成带固定空间抖动的 A8/A4 mask，
 | `shared/nav_ui/src/moto_nav_ui.cpp` | `update_navigation` 以场景选择器控制 HUD、路线、状态；当前 `route_point_count >= 2` 即显示指导，需修正。复用现有 V6 位图、路线平滑、圆屏裁切；加英文标签、环境光图层 | 页面可局部修改，不重写整套原有地图绘图 |
 | `shared/nav_ui/include/moto_map_visual_style.h` 和 `moto_nav_visual_geometry.h` | 集中记录本页颜色、尺寸和环境光参数，避免硬编码分散 | 已有主要底图 token 与 466 几何 |
 | `platforms/esp32/main/phone_nav_bridge.cpp` | 确保 token/generation 不匹配或 BLE 断开时及时清掉有效几何/导航状态；给 UI 明确失效信号 | 已有多处清理逻辑，仍需与新选择器联测 |
-| `platforms/ios/App/AppModel.swift` | 当前阶段继续发送路线；只有拿到授权且坐标体系匹配的地物源后再开启真实 `MapScene` | 北京真实地物当前不可用，不影响 P0 路线优先画面 |
+| `platforms/ios/App/AppModel.swift` | 发送真实路线，同时按 GCJ-02 位置查询已验证的北京/济南本地包；不同城市的地物不串用 | 2026-10-07 已接入；完整数据、稀疏地物与无覆盖均由实际查询结果决定，实物显示仍待验收 |
 
 限速牌的 `speed_limit_validated` 在拿不到可靠段级来源之前固定为 false，即使 `speed_limit_kph > 0` 也不直接画。当前 `moto_nav_ui.cpp` 会见非零就画，此处是必须处理的真实性差异。
 
@@ -181,10 +183,10 @@ ESP32 实现应将原稿形体预烘焙成带固定空间抖动的 A8/A4 mask，
 - [真实道路但无建筑的示意 fixture](nav-code-ready-roads-only-466.png)
 - [完整地物的**合成** fixture](nav-code-ready-rich-fixture-466.png)
 
-这些图中的路线和地物仅为**渲染测试 fixture**，不代表北京的真实地理形状。最终设备以百度实际路线和未来获授权的地物数据喂给同一渲染规则。
+这些图中的路线和地物仅为**渲染测试 fixture**，不代表北京的真实地理形状。最终设备使用百度实际路线与已获用户同意的 OSM 离线地物，喂给同一渲染规则。
 
 ## 9. 审阅入口与源码依据
 
 Canva 的可编辑审阅稿：[本轮克制柔光修订](https://www.canva.com/d/g5PiJHfWAOnipIq)、[已选 B 英文版](https://www.canva.com/d/h_YVZfOCbe8dzLA)、[当前数据主画面校准版](https://www.canva.com/d/BGBcaS4xFYMprkW)、[短路线](https://www.canva.com/d/Oc1ErHf-nSVwuZ2)、[GPS 丢失](https://www.canva.com/d/R5x3RTZhZdeIkVq)。这些 Canva 页面由图像转为可编辑元素，后续视觉沟通使用；**本目录的 SVG/HTML 渲染规则和 466 px PNG 是像素与行为验收基准**，不能以 Canva 转换后可能出现的字形或微小位置偏差替代源码。
 
-GitHub 插件复核的代码依据：[iPhone 真导航只在演示模式发送 MapScene](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/blob/codex/baidu-iphone-direct-sdk/platforms/ios/App/AppModel.swift#L404-L420)、[NavCore 截取未驶过路线](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/blob/codex/baidu-iphone-direct-sdk/shared/nav_core/nav_core.cpp#L571-L637)、[当前 UI 指引条件](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/blob/codex/baidu-iphone-direct-sdk/shared/nav_ui/src/moto_nav_ui.cpp)。远端实际已到 `cc2d67e`，基础 V6 的 [ESP32 构建](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/37422556109) 和 [iPhone 构建](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/37422556131) 均成功；本地的 origin 缓存落后，不能用“ahead 2”判断实际云端状态。新色板与浏览器行为参考的发布/构建状态以实现审计和具体提交为准，不能把旧绿灯当作本轮全部目标完成。
+GitHub 插件复核的代码依据：[iPhone 真实导航查询离线 MapScene](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/blob/45d87f01a604fb66799ca047294c423cb63d7321/platforms/ios/App/AppModel.swift#L404-L420)、[NavCore 截取未驶过路线](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/blob/45d87f01a604fb66799ca047294c423cb63d7321/shared/nav_core/nav_core.cpp#L571-L637)、[实际 UI 指引条件](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/blob/45d87f01a604fb66799ca047294c423cb63d7321/shared/nav_ui/src/moto_nav_ui.cpp)。本轮数据与传输的构建状态见 [10 月 7 日实施记录](../docs/OFFLINE_MAP_DELIVERY_2026-10-07.md)；本地 origin 缓存不是云端状态的证据。新色板、浏览器行为参考、真实底图及固件柔光分别核对其对应提交与测试，不能把一次旧绿灯当作全部目标完成。

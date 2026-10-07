@@ -11,9 +11,11 @@ private struct OfflineMapStatusSection: View {
     let transferStatus: String
 
     var body: some View {
-        Section("圆屏离线底图") {
+        Section {
             LabeledContent("手机地图", value: store.statusText)
             LabeledContent("发送状态", value: transferStatus)
+        } header: {
+            Text("圆屏离线底图")
         } footer: {
             Text("北京与济南道路、建筑来自 OpenStreetMap。缺少地物时仍显示导航路线；离线底图不代替百度路线规划。© OpenStreetMap contributors · ODbL 1.0")
         }
