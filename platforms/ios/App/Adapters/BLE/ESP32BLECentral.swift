@@ -322,7 +322,7 @@ final class ESP32BLECentral: NSObject {
         input.reduceMotion = value.reduceMotion ? 1 : 0
         input.brightness = UInt8(value.brightness)
         do {
-            let frames = try codec.encodeDisplayPreferences(input)
+            let frames = try codec.encode(input)
             try send(frames)
             appearanceDelivery.sent(nowMs: Self.monotonicMs())
             snapshot.appearanceStatus = appearanceDelivery.status

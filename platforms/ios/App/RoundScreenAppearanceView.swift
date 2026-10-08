@@ -16,11 +16,13 @@ struct RoundScreenAppearanceView: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
             }.listRowBackground(Color.clear)
-            Section("柔光") {
+            Section {
                 slider("存在感", value: $model.roundScreenAppearance.intensity)
                 slider("运动速度", value: $model.roundScreenAppearance.speed)
                 slider("移动幅度", value: $model.roundScreenAppearance.travel)
                 Toggle("减少动态", isOn: $model.roundScreenAppearance.reduceMotion)
+            } header: {
+                Text("柔光")
             } footer: {
                 Text("使用已确定的石墨色板。速度为 0 或打开减少动态时，柔光静止；路线、箭头和文字不随柔光移动。")
             }
@@ -32,10 +34,12 @@ struct RoundScreenAppearanceView: View {
                     slider("亮度", value: $model.roundScreenAppearance.brightness, range: 10 ... 100)
                 }
             }
-            Section("同步") {
+            Section {
                 LabeledContent("状态", value: model.device.appearanceStatus)
                 Button("重新同步", action: model.retryRoundScreenAppearance)
                 Button("恢复设计默认值") { model.roundScreenAppearance = RoundScreenAppearance() }
+            } header: {
+                Text("同步")
             } footer: {
                 Text("设置保存在手机和圆屏上。离线修改会在重新连接后自动同步。圆屏电量与本机亮度仍可通过短按电源键查看。")
             }
