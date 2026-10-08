@@ -123,6 +123,7 @@ struct NavSnapshot {
   double remaining_distance_m = 0.0;
   std::uint32_t remaining_duration_s = 0;
 
+  bool speed_limit_validated = false;
   bool has_next_maneuver = false;
   Maneuver next_maneuver;
   double distance_to_next_maneuver_m = 0.0;

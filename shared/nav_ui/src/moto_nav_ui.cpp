@@ -3,6 +3,12 @@
 #include "moto_nav_icon_assets.h"
 #include "moto_nav_distance_font.h"
 #include "moto_nav_visual_geometry.h"
+#include "moto_nav_design_runtime.hpp"
+#include <cstdlib>
+#ifdef ESP_PLATFORM
+#include "esp_heap_caps.h"
+#include "esp_random.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -89,6 +95,7 @@ struct MapPolyline {
     const lv_point_precise_t *points = nullptr;
     std::uint16_t count = 0;
     bool filled = false;
+    bool road_material = false;
 };
 
 struct Ui {
@@ -100,6 +107,16 @@ struct Ui {
     bool page_dots_visible = true;
 
     lv_obj_t *nav_map = nullptr;
+    lv_obj_t *nav_material = nullptr;
+    lv_obj_t *nav_action = nullptr;
+    lv_timer_t *nav_material_timer = nullptr;
+    lv_image_dsc_t material_image{};
+    std::uint16_t *material_pixels = nullptr;
+    moto::design::Ambient ambient{};
+    moto::design::MaterialScratch material_scratch{};
+    moto::design::Decision decision{};
+    moto_ui_state_t latest_state{};
+    std::uint32_t material_slow_frames = 0;
     lv_obj_t *nav_buildings[MOTO_UI_BUILDING_FOOTPRINT_CAPACITY]{};
     MapPolyline nav_building_lines[MOTO_UI_BUILDING_FOOTPRINT_CAPACITY]{};
     lv_point_precise_t nav_building_points[
@@ -214,7 +231,17 @@ void reset_ui_state() {
     // offline map buffers make Ui about 15 KiB, so that temporary can consume
     // nearly the whole ESP-IDF main-task stack before LVGL is called.  Clear
     // the retained instance in place and restore the two non-zero defaults.
+    for(auto *timer:{ui.nav_material_timer,ui.page_dots_timer,ui.nav_route_motion_timer,
+                     ui.nav_lifecycle_timer,ui.nav_success_timer}) {
+        if(timer) lv_timer_delete(timer);
+    }
+    if(ui.material_pixels) std::free(ui.material_pixels);
     std::memset(&ui, 0, sizeof(ui));
+#ifdef ESP_PLATFORM
+    moto::design::initialize(ui.ambient, esp_random());
+#else
+    moto::design::initialize(ui.ambient, 0x6D6F746F);
+#endif
     ui.page = MOTO_UI_PAGE_NAVIGATION;
     ui.page_dots_visible = true;
     ui.nav_maneuver_type = MOTO_MANEUVER_STRAIGHT;
@@ -440,115 +467,40 @@ void draw_map_line(lv_layer_t *layer, const lv_draw_line_dsc_t &line) {
 // fan that spills outside the real geometry.
 void draw_building_fill(lv_layer_t *layer, lv_obj_t *object,
                         const MapPolyline &polygon, const lv_area_t &origin) {
-    if(!polygon.filled || polygon.count < 4 || polygon.points == nullptr) return;
-    std::uint16_t count = polygon.count;
-    if(polygon.points[0].x == polygon.points[count - 1].x &&
-       polygon.points[0].y == polygon.points[count - 1].y) --count;
-    if(count < 3 || count > MOTO_UI_BUILDING_POINT_CAPACITY) return;
-
-    std::uint8_t indices[MOTO_UI_BUILDING_POINT_CAPACITY]{};
-    std::uint16_t remaining = 0;
-    for(std::uint16_t i = 0; i < count; ++i) {
-        if(remaining > 0 &&
-           polygon.points[i].x == polygon.points[indices[remaining - 1]].x &&
-           polygon.points[i].y == polygon.points[indices[remaining - 1]].y) continue;
-        indices[remaining++] = static_cast<std::uint8_t>(i);
-    }
-    if(remaining < 3) return;
-    const auto cross = [&polygon](std::uint8_t a, std::uint8_t b,
-                                  std::uint8_t c) -> std::int64_t {
-        const auto &p = polygon.points[a];
-        const auto &q = polygon.points[b];
-        const auto &r = polygon.points[c];
-        return static_cast<std::int64_t>(q.x - p.x) * (r.y - p.y) -
-               static_cast<std::int64_t>(q.y - p.y) * (r.x - p.x);
-    };
-    std::int64_t area2 = 0;
-    for(std::uint16_t i = 0; i < remaining; ++i) {
-        const auto &a = polygon.points[indices[i]];
-        const auto &b = polygon.points[indices[(i + 1) % remaining]];
-        area2 += static_cast<std::int64_t>(a.x) * b.y -
-                 static_cast<std::int64_t>(b.x) * a.y;
-    }
-    if(area2 == 0) return;
-    const bool ccw = area2 > 0;
-
-    std::uint8_t triangles[(MOTO_UI_BUILDING_POINT_CAPACITY - 2) * 3]{};
-    std::uint16_t triangle_count = 0;
-    while(remaining > 2) {
-        bool found = false;
-        for(std::uint16_t i = 0; i < remaining; ++i) {
-            const std::uint8_t a = indices[(i + remaining - 1) % remaining];
-            const std::uint8_t b = indices[i];
-            const std::uint8_t c = indices[(i + 1) % remaining];
-            const std::int64_t turn = cross(a, b, c);
-            if(ccw ? turn <= 0 : turn >= 0) continue;
-            bool contains_vertex = false;
-            for(std::uint16_t j = 0; j < remaining; ++j) {
-                const std::uint8_t candidate = indices[j];
-                if(candidate == a || candidate == b || candidate == c) continue;
-                const std::int64_t ab = cross(a, b, candidate);
-                const std::int64_t bc = cross(b, c, candidate);
-                const std::int64_t ca = cross(c, a, candidate);
-                if(ccw ? (ab > 0 && bc > 0 && ca > 0)
-                       : (ab < 0 && bc < 0 && ca < 0)) {
-                    contains_vertex = true;
-                    break;
-                }
-            }
-            if(contains_vertex) continue;
-            triangles[triangle_count * 3] = a;
-            triangles[triangle_count * 3 + 1] = b;
-            triangles[triangle_count * 3 + 2] = c;
-            ++triangle_count;
-            for(std::uint16_t j = i; j + 1 < remaining; ++j)
-                indices[j] = indices[j + 1];
-            --remaining;
-            found = true;
-            break;
+    if(!polygon.filled || polygon.count<4 || !polygon.points) return;
+    auto count=polygon.count;
+    if(polygon.points[0].x==polygon.points[count-1].x && polygon.points[0].y==polygon.points[count-1].y) --count;
+    if(count<3 || count>MOTO_UI_BUILDING_POINT_CAPACITY) return;
+    int minimum=350,maximum=0;
+    for(unsigned i=0;i<count;++i) {minimum=std::min(minimum,static_cast<int>(polygon.points[i].y)+origin.y1);maximum=std::max(maximum,static_cast<int>(polygon.points[i].y)+origin.y1);}
+    const auto clip=layer->_clip_area;
+    minimum=std::max(minimum,clip.y1);maximum=std::min(maximum,clip.y2);
+    float intersections[MOTO_UI_BUILDING_POINT_CAPACITY];
+    lv_draw_rect_dsc_t fill;lv_draw_rect_dsc_init(&fill);
+    fill.bg_color=lv_obj_get_style_bg_color(object,LV_PART_MAIN);fill.border_opa=LV_OPA_TRANSP;
+    for(int y=minimum;y<=maximum;++y) {
+        const float scan=y+.5F;unsigned crossings=0;
+        for(unsigned i=0;i<count;++i) {
+            const auto& a=polygon.points[i];const auto& b=polygon.points[(i+1)%count];
+            const float ay=a.y+origin.y1,by=b.y+origin.y1;
+            if((ay<=scan && by>scan) || (by<=scan && ay>scan))
+                intersections[crossings++]=origin.x1+a.x+(scan-ay)*(b.x-a.x)/(by-ay);
         }
-        if(!found) return;
-    }
-
-    lv_draw_triangle_dsc_t triangle;
-    lv_draw_triangle_dsc_init(&triangle);
-    triangle.color = lv_obj_get_style_bg_color(object, LV_PART_MAIN);
-    triangle.opa = LV_OPA_COVER;
-    for(std::uint16_t i = 0; i < triangle_count; ++i) {
-        for(int corner = 0; corner < 3; ++corner) {
-            const auto &point = polygon.points[triangles[i * 3 + corner]];
-            triangle.p[corner] = {
-                static_cast<lv_value_precise_t>(origin.x1 + point.x),
-                static_cast<lv_value_precise_t>(origin.y1 + point.y),
-            };
-        }
-        lv_draw_triangle(layer, &triangle);
-    }
-
-    // LVGL antialiases each triangle independently, leaving a dark one-pixel
-    // seam on some RGB565 renderers. Cover only triangulation diagonals;
-    // exterior edges remain crisp and receive the footprint outline below.
-    lv_draw_line_dsc_t seam;
-    lv_draw_line_dsc_init(&seam);
-    seam.base.layer = layer;
-    seam.color = triangle.color;
-    seam.width = 4;
-    for(std::uint16_t i = 0; i < triangle_count; ++i) {
-        for(int edge = 0; edge < 3; ++edge) {
-            const auto a = triangles[i * 3 + edge];
-            const auto b = triangles[i * 3 + (edge + 1) % 3];
-            if((a + 1 == b) || (b + 1 == a) ||
-               (a == 0 && b == count - 1) ||
-               (b == 0 && a == count - 1)) continue;
-            seam.p1 = {static_cast<lv_value_precise_t>(
-                           origin.x1 + polygon.points[a].x),
-                       static_cast<lv_value_precise_t>(
-                           origin.y1 + polygon.points[a].y)};
-            seam.p2 = {static_cast<lv_value_precise_t>(
-                           origin.x1 + polygon.points[b].x),
-                       static_cast<lv_value_precise_t>(
-                           origin.y1 + polygon.points[b].y)};
-            draw_map_line(layer, seam);
+        std::sort(intersections,intersections+crossings);
+        const float opacity=255*(1-moto::design::fade_at(static_cast<float>(y)));
+        const auto span=[&](int left,int right,float coverage) {
+            left=std::max(left,clip.x1);right=std::min(right,clip.x2);
+            if(left>right || coverage<=0 || opacity<=0) return;
+            fill.bg_opa=static_cast<lv_opa_t>(std::lround(opacity*std::clamp(coverage,0.F,1.F)));
+            const lv_area_t strip{left,y,right,y};lv_draw_rect(layer,&fill,&strip);
+        };
+        // Even/odd scanline fill preserves recesses without triangle seams.
+        // Fractional edge coverage produces quiet antialiasing at rotated edges.
+        for(unsigned pair=0;pair+1<crossings;pair+=2) {
+            const float left=intersections[pair],right=intersections[pair+1];
+            const int first=static_cast<int>(std::floor(left)),last=static_cast<int>(std::ceil(right))-1;
+            if(first==last) span(first,last,right-left);
+            else {span(first,first,first+1-left);span(first+1,last-1,1);span(last,last,right-last);}
         }
     }
 }
@@ -580,7 +532,24 @@ void draw_map_polyline(lv_event_t *event) {
         line.p2.x += object_area.x1;
         line.p1.y += object_area.y1;
         line.p2.y += object_area.y1;
-        draw_map_line(layer, line);
+        if(polyline->road_material || polyline->filled) {
+            const lv_area_t saved=layer->_clip_area;
+            const int first=std::max<int>(saved.y1, std::min(line.p1.y,line.p2.y)-line.width);
+            const int last=std::min<int>(saved.y2, std::max(line.p1.y,line.p2.y)+line.width);
+            const lv_color_t base=line.color;
+            const auto base_opacity=line.opa;
+            const auto rgb=lv_color_to_u32(base)&0xFFFFFFU;
+            // Anchor material bands to the screen, not the dirty/flush strip.
+            // Otherwise the same road changes color after a partial redraw.
+            for(int y=(first/4)*4;y<=last;y+=4) {
+                layer->_clip_area.y1=std::max(y,first);
+                layer->_clip_area.y2=std::min(y+3,last);
+                line.color=polyline->road_material?lv_color_hex(moto::design::road_color(rgb,static_cast<float>(y))):base;
+                line.opa=static_cast<lv_opa_t>(std::lround(base_opacity*(1-moto::design::fade_at(static_cast<float>(y)))));
+                draw_map_line(layer,line);
+            }
+            line.color=base;line.opa=base_opacity;layer->_clip_area=saved;
+        } else draw_map_line(layer, line);
         line.round_start = 0;
     }
 }
@@ -602,7 +571,7 @@ void draw_map_fade(lv_event_t *event) {
     lv_layer_t *layer = lv_event_get_layer(event);
     // Fade the surrounding map into the black guidance area. Draw this over
     // roads/buildings but under the route and vehicle, so guidance stays clear.
-    constexpr int kBands = MOTO_MAP_FADE_BANDS;
+    constexpr int kBands = MOTO_NAV_FADE_HEIGHT;
     const int height = area.y2 - area.y1 + 1;
     for(int index = 0; index < kBands; ++index) {
         const int top = area.y1 + index * height / kBands;
@@ -612,7 +581,7 @@ void draw_map_fade(lv_event_t *event) {
         lv_draw_rect_dsc_init(&band);
         band.bg_color = kBlack;
         band.bg_opa = static_cast<lv_opa_t>(
-            (index + 1) * (index + 1) * 255 / (kBands * kBands));
+            std::lround(255*moto::design::fade_at(static_cast<float>(MOTO_NAV_FADE_START_Y+index))));
         band.border_opa = LV_OPA_TRANSP;
         const lv_area_t strip = {area.x1, top, area.x2, bottom};
         lv_draw_rect(layer, &band, &strip);
@@ -961,9 +930,9 @@ void update_building_geometry(const moto_ui_state_t *state) {
                     kBuildingOutline, 0);
                 lv_obj_set_style_bg_color(
                     ui.nav_buildings[i],
-                    landmark ? kBuildingLandmark : kBuildingGray, 0);
+                    lv_color_hex(moto::design::building_color(ui.nav_building_spans[i].material_key,landmark)), 0);
                 lv_obj_set_style_line_width(
-                    ui.nav_buildings[i], px(landmark ? 2 : 1), 0);
+                    ui.nav_buildings[i], 1, 0);
                 lv_obj_remove_flag(ui.nav_buildings[i], LV_OBJ_FLAG_HIDDEN);
             } else {
                 lv_obj_add_flag(ui.nav_buildings[i], LV_OBJ_FLAG_HIDDEN);
@@ -1119,121 +1088,20 @@ void draw_phone_body(lv_layer_t *layer, const lv_area_t& area,
 }
 
 void draw_connection_symbol(lv_event_t *event) {
-    lv_obj_t *object = lv_event_get_target_obj(event);
-    lv_area_t area;
-    lv_obj_get_coords(object, &area);
-    lv_layer_t *layer = lv_event_get_layer(event);
-    const int center_x = area.x1 + px(75);
-    const int center_y = area.y1 + px(73);
-    const double phase = ui.lifecycle_phase_deg * kPi / 180.0;
-
-    if(ui.lifecycle_visual == LifecycleVisual::Connected) {
-        const int pulse = static_cast<int>(px(67) +
-            std::lround((std::sin(phase) + 1.0) * px(3.0)));
-        lv_draw_arc_dsc_t halo;
-        lv_draw_arc_dsc_init(&halo);
-        halo.color = kGreen;
-        halo.width = px(3);
-        halo.opa = LV_OPA_50;
-        halo.rounded = 1;
-        halo.center = {center_x, center_y};
-        halo.radius = pulse;
-        halo.start_angle = 0;
-        halo.end_angle = 360;
-        lv_draw_arc(layer, &halo);
-        draw_disc(layer, center_x, center_y, px(92), kGreen, LV_OPA_COVER);
-        const lv_point_precise_t check[] = {
-            {static_cast<lv_value_precise_t>(area.x1 + px(53)),
-             static_cast<lv_value_precise_t>(area.y1 + px(74))},
-            {static_cast<lv_value_precise_t>(area.x1 + px(69)),
-             static_cast<lv_value_precise_t>(area.y1 + px(89))},
-            {static_cast<lv_value_precise_t>(area.x1 + px(99)),
-             static_cast<lv_value_precise_t>(area.y1 + px(55))},
-        };
-        draw_segment(layer, kBlack, px(9), LV_OPA_COVER, check, 3);
-        return;
+    auto *object=lv_event_get_target_obj(event);
+    lv_area_t area;lv_obj_get_coords(object,&area);
+    auto *layer=lv_event_get_layer(event);
+    const int cx=area.x1+(area.x2-area.x1)/2,cy=area.y1+(area.y2-area.y1)/2;
+    lv_draw_line_dsc_t line;lv_draw_line_dsc_init(&line);
+    line.color=lv_color_hex(MOTO_MAP_STATUS_MARK);line.width=2;line.round_start=1;line.round_end=1;
+    if(ui.decision.scene==moto::design::Scene::PhoneOffline || ui.decision.scene==moto::design::Scene::PhoneConnecting) {
+        lv_draw_rect_dsc_t d;lv_draw_rect_dsc_init(&d);d.bg_opa=LV_OPA_TRANSP;
+        d.border_width=2;d.border_color=line.color;d.border_opa=LV_OPA_COVER;d.radius=3;
+        lv_area_t phone{cx-9,cy-15,cx+9,cy+15};lv_draw_rect(layer,&d,&phone);
+    } else {
+        line.p1={cx-16,cy};line.p2={cx+16,cy};lv_draw_line(layer,&line);
+        line.p1={cx,cy-10};line.p2={cx,cy+10};lv_draw_line(layer,&line);
     }
-
-    if(ui.lifecycle_visual == LifecycleVisual::Ready ||
-       ui.lifecycle_visual == LifecycleVisual::Planning) {
-        const lv_point_precise_t route[] = {
-            {static_cast<lv_value_precise_t>(area.x1 + px(34)),
-             static_cast<lv_value_precise_t>(area.y1 + px(113))},
-            {static_cast<lv_value_precise_t>(area.x1 + px(50)),
-             static_cast<lv_value_precise_t>(area.y1 + px(91))},
-            {static_cast<lv_value_precise_t>(area.x1 + px(80)),
-             static_cast<lv_value_precise_t>(area.y1 + px(98))},
-            {static_cast<lv_value_precise_t>(area.x1 + px(111)),
-             static_cast<lv_value_precise_t>(area.y1 + px(48))},
-        };
-        draw_segment(layer, kGraphite, px(12), LV_OPA_COVER, route, 4);
-        draw_segment(layer, kWhite, px(5), LV_OPA_COVER, route, 4);
-        draw_disc(layer, route[0].x, route[0].y, px(16), kWhite,
-                  LV_OPA_COVER);
-
-        lv_draw_arc_dsc_t pin;
-        lv_draw_arc_dsc_init(&pin);
-        pin.color = kWhite;
-        pin.width = px(5);
-        pin.opa = LV_OPA_COVER;
-        pin.rounded = 1;
-        pin.center = {route[3].x, route[3].y};
-        pin.radius = px(13);
-        pin.start_angle = 0;
-        pin.end_angle = 360;
-        lv_draw_arc(layer, &pin);
-        draw_disc(layer, route[3].x, route[3].y, px(7), kWhite,
-                  LV_OPA_COVER);
-
-        if(ui.lifecycle_visual == LifecycleVisual::Planning) {
-            // A single travelling bead communicates progress without a
-            // processor-heavy full-screen animation.
-            const double t =
-                static_cast<double>(ui.lifecycle_phase_deg % 120U) / 120.0;
-            const int segment = std::min(2, static_cast<int>(t * 3.0));
-            const double local = t * 3.0 - segment;
-            const int x = static_cast<int>(std::lround(
-                route[segment].x +
-                (route[segment + 1].x - route[segment].x) * local));
-            const int y = static_cast<int>(std::lround(
-                route[segment].y +
-                (route[segment + 1].y - route[segment].y) * local));
-            draw_disc(layer, x, y, px(12), kWhite, LV_OPA_COVER);
-        } else {
-            const lv_opa_t ready_opa = static_cast<lv_opa_t>(
-                150 + std::lround((std::sin(phase) + 1.0) * 40.0));
-            draw_disc(layer, route[0].x, route[0].y, px(25), kWhite,
-                      ready_opa);
-        }
-        return;
-    }
-
-    draw_phone_body(layer, area, kWhite, LV_OPA_COVER);
-    const bool connecting =
-        ui.lifecycle_visual == LifecycleVisual::PhoneConnecting;
-    const int speed = connecting ? 2 : 1;
-    for(int index = 0; index < 3; ++index) {
-        lv_draw_arc_dsc_t scan;
-        lv_draw_arc_dsc_init(&scan);
-        scan.color = index == 0 ? kWhite : kQuiet;
-        scan.width = px(index == 0 ? 4 : 3);
-        scan.opa = static_cast<lv_opa_t>(220 - index * 55);
-        scan.rounded = 1;
-        scan.center = {center_x, center_y};
-        scan.radius = px(66 - index * 7);
-        const int start =
-            (static_cast<int>(ui.lifecycle_phase_deg) * speed + index * 112) %
-            360;
-        scan.start_angle = start;
-        scan.end_angle = start + (connecting ? 54 : 34);
-        lv_draw_arc(layer, &scan);
-    }
-    const int orbit_x = static_cast<int>(
-        std::lround(center_x + std::sin(phase * speed) * px(66.0)));
-    const int orbit_y = static_cast<int>(
-        std::lround(center_y - std::cos(phase * speed) * px(66.0)));
-    draw_disc(layer, orbit_x, orbit_y, px(connecting ? 11 : 9), kWhite,
-              LV_OPA_COVER);
 }
 
 void set_layer_opacity(void *object, int32_t opacity) {
@@ -1375,7 +1243,22 @@ LifecycleVisual desired_lifecycle_visual() {
 }
 
 void refresh_lifecycle() {
-    transition_lifecycle(desired_lifecycle_visual());
+    if(!ui.nav_lifecycle) return;
+    const bool status=!ui.decision.guidance && !ui.demo_active;
+    lv_anim_delete(ui.nav_lifecycle,nullptr);
+    if(status) lv_obj_remove_flag(ui.nav_lifecycle,LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(ui.nav_lifecycle,LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_opa(ui.nav_lifecycle,LV_OPA_COVER,0);
+    lv_obj_add_flag(ui.nav_lifecycle_kicker,LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(ui.nav_lifecycle_title,ui.decision.title);
+    lv_label_set_text(ui.nav_lifecycle_subtitle,ui.decision.subtitle);
+    lv_obj_set_style_text_color(ui.nav_lifecycle_title,kWhite,0);
+    lv_obj_set_style_text_font(ui.nav_lifecycle_title,&lv_font_montserrat_20,0);
+    lv_obj_set_style_text_letter_space(ui.nav_lifecycle_title,1,0);
+    lv_obj_align(ui.nav_lifecycle_title,LV_ALIGN_TOP_MID,0,323);
+    lv_obj_align(ui.nav_lifecycle_subtitle,LV_ALIGN_TOP_MID,0,362);
+    lv_obj_align(ui.nav_lifecycle_symbol,LV_ALIGN_TOP_MID,0,205);
+    lv_obj_invalidate(ui.nav_lifecycle_symbol);
 }
 
 void lifecycle_tick(lv_timer_t *) {
@@ -1401,7 +1284,6 @@ void set_navigation_guidance_visible(bool visible) {
         ui.nav_maneuver,
         ui.nav_distance,
         ui.nav_unit,
-        ui.nav_progress,
     };
     for(lv_obj_t *object : objects) {
         if(visible) {
@@ -1441,60 +1323,57 @@ void update_nav_status(const moto_ui_state_t *state) {
 }
 
 void update_navigation(const moto_ui_state_t *state) {
-    update_building_geometry(state);
-    update_road_geometry(state);
-    update_route_geometry(state);
-    update_maneuver(state->maneuver);
-    update_nav_status(state);
-
-    // Never suggest "go straight for 0 m" while there is no route. Waiting is
-    // a connection state, not actionable navigation guidance.
-    const bool has_guidance = ui.demo_active ||
-                              state->mode == MOTO_UI_ARRIVED ||
-                              state->route_point_count >= 2;
-    ui.navigation_has_guidance = has_guidance;
-    ui.navigation_route_request_in_flight =
-        state->route_request_in_flight != 0;
-    set_navigation_guidance_visible(has_guidance);
+    ui.latest_state=*state;
+    ui.decision=moto::design::decide(*state,ui.demo_active?MOTO_UI_PHONE_ONLINE:ui.phone_connection);
+    moto::design::navigation_event(ui.ambient,*state,ui.decision.guidance);
+    const bool visible=ui.decision.geometry;
+    if(visible) {
+        update_building_geometry(state);update_road_geometry(state);update_route_geometry(state);
+    } else {
+        for(auto *o:ui.nav_buildings) if(o) lv_obj_add_flag(o,LV_OBJ_FLAG_HIDDEN);
+        for(auto *o:ui.nav_roads) if(o) lv_obj_add_flag(o,LV_OBJ_FLAG_HIDDEN);
+        ui.nav_building_point_count=ui.nav_building_footprint_count=0;
+        ui.nav_road_point_count=ui.nav_road_polyline_count=0;
+        ui.nav_route_target_count=ui.nav_route_point_count=0;
+        for(auto *o:{ui.nav_route,ui.nav_route_shadow,ui.nav_marker}) lv_obj_add_flag(o,LV_OBJ_FLAG_HIDDEN);
+    }
+    ui.navigation_has_guidance=ui.decision.guidance;
+    set_navigation_guidance_visible(ui.decision.guidance);
+    if(ui.decision.guidance) lv_obj_remove_flag(ui.nav_action,LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(ui.nav_action,LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(ui.nav_status,ui.demo_active?"DEMO RIDE":
+        ui.decision.scene==moto::design::Scene::InstructionOnly ? ui.decision.title : "");
+    lv_obj_set_style_text_color(ui.nav_status,kNavQuiet,0);
     refresh_lifecycle();
-    if(!has_guidance) return;
-
-    char value[16];
-    const char *unit = "m";
-    if(state->distance_to_maneuver_m >= 1000) {
-        std::snprintf(value, sizeof(value), "%.1f",
-                      state->distance_to_maneuver_m / 1000.0);
-        unit = "km";
-    } else {
-        std::snprintf(value, sizeof(value), "%u",
-                      static_cast<unsigned>(state->distance_to_maneuver_m));
+    if(!ui.decision.guidance) {lv_arc_set_value(ui.nav_progress,0);return;}
+    update_maneuver(state->maneuver);
+    lv_label_set_text(ui.nav_action,moto::design::maneuver_label(state->maneuver));
+    lv_obj_set_style_text_font(ui.nav_distance,&moto_font_distance_56,0);
+    char value[16];const char *unit="m";
+    if(state->distance_to_maneuver_m>=1000) {
+        std::snprintf(value,sizeof(value),"%.1f",state->distance_to_maneuver_m/1000.0);unit="km";
+    } else std::snprintf(value,sizeof(value),"%u",static_cast<unsigned>(state->distance_to_maneuver_m));
+    lv_label_set_text(ui.nav_distance,value);lv_label_set_text(ui.nav_unit,unit);
+    const int shift=ui.decision.limit?0:24;
+    lv_obj_set_x(ui.nav_maneuver,MOTO_NAV_MANEUVER_X+shift);
+    lv_obj_set_pos(ui.nav_distance,MOTO_NAV_DISTANCE_X+shift,MOTO_NAV_DISTANCE_Y);
+    lv_obj_update_layout(ui.nav_distance);lv_obj_update_layout(ui.nav_unit);
+    const int right=ui.decision.limit?314:390;
+    if(lv_obj_get_x(ui.nav_distance)+lv_obj_get_width(ui.nav_distance)+lv_obj_get_width(ui.nav_unit)+6>right) {
+        // Long kilometre values use whole km rather than colliding with a verified sign.
+        std::snprintf(value,sizeof(value),"%u",static_cast<unsigned>((state->distance_to_maneuver_m+500)/1000));
+        lv_label_set_text(ui.nav_distance,value);lv_obj_update_layout(ui.nav_distance);
     }
-    if(state->mode == MOTO_UI_ARRIVED) std::snprintf(value, sizeof(value), "0");
-    lv_label_set_text(ui.nav_distance, value);
-    lv_label_set_text(ui.nav_unit, unit);
-    // This number is never the total trip distance. Its physical attachment to
-    // the maneuver glyph makes that meaning clear without an explanatory label.
-    const bool has_limit = state->speed_limit_kph > 0;
-    const int hud_shift = has_limit ? 0 : 24;
-    lv_obj_set_x(ui.nav_maneuver, MOTO_NAV_MANEUVER_X + hud_shift);
-    lv_obj_align(ui.nav_distance, LV_ALIGN_TOP_LEFT,
-                 MOTO_NAV_DISTANCE_X + hud_shift, MOTO_NAV_DISTANCE_Y);
-    lv_obj_align_to(ui.nav_unit, ui.nav_distance, LV_ALIGN_OUT_RIGHT_BOTTOM,
-                    px(6), px(-7));
-
-    lv_arc_set_value(ui.nav_progress,
-                     std::min<int>(100, state->route_progress_percent));
-    lv_obj_set_style_arc_color(ui.nav_progress, kProgressActive, LV_PART_INDICATOR);
-
-    if(state->speed_limit_kph > 0) {
-        char limit[8];
-        std::snprintf(limit, sizeof(limit), "%u",
-                      static_cast<unsigned>(state->speed_limit_kph));
-        lv_label_set_text(ui.nav_limit_value, limit);
-        lv_obj_remove_flag(ui.nav_limit, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(ui.nav_limit, LV_OBJ_FLAG_HIDDEN);
+    for(const lv_font_t* font:{&lv_font_montserrat_48,&lv_font_montserrat_28}) {
+        if(lv_obj_get_x(ui.nav_distance)+lv_obj_get_width(ui.nav_distance)+lv_obj_get_width(ui.nav_unit)+6<=right) break;
+        lv_obj_set_style_text_font(ui.nav_distance,font,0);lv_obj_update_layout(ui.nav_distance);
     }
+    lv_obj_align_to(ui.nav_unit,ui.nav_distance,LV_ALIGN_OUT_RIGHT_BOTTOM,6,-7);
+    lv_arc_set_value(ui.nav_progress,state->total_distance_valid?std::min<int>(100,state->route_progress_percent):0);
+    if(ui.decision.limit) {
+        char limit[8];std::snprintf(limit,sizeof(limit),"%u",static_cast<unsigned>(state->speed_limit_kph));
+        lv_label_set_text(ui.nav_limit_value,limit);lv_obj_remove_flag(ui.nav_limit,LV_OBJ_FLAG_HIDDEN);
+    } else lv_obj_add_flag(ui.nav_limit,LV_OBJ_FLAG_HIDDEN);
 }
 
 void update_speedometer(const moto_ui_state_t *state) {
@@ -1593,8 +1472,50 @@ void create_page_dots() {
     reveal_page_dots();
 }
 
+void update_material_pixels() {
+    if(!ui.material_pixels || !ui.nav_material) return;
+    const auto started=lv_tick_get();
+    moto::design::render_material(ui.ambient,ui.material_pixels,ui.material_scratch);
+    lv_obj_invalidate(ui.nav_material);
+    if(lv_tick_elaps(started)>100 && ui.nav_material_timer) {
+        if(++ui.material_slow_frames>=3) lv_timer_set_period(ui.nav_material_timer,1000);
+    } else ui.material_slow_frames=0;
+}
+void material_tick(lv_timer_t*) {
+    if(ui.page!=MOTO_UI_PAGE_NAVIGATION) {
+        moto::design::tick(ui.ambient,lv_tick_get(),false); return;
+    }
+    if(moto::design::tick(ui.ambient,lv_tick_get(),ui.decision.motion && !ui.reduce_motion))
+        update_material_pixels();
+}
+void create_material(lv_obj_t* page) {
+    // One retained cropped 466x350 texture (326200 bytes), never a full-screen
+    // offscreen buffer or a new allocation per frame. Prefer the board's PSRAM.
+    constexpr std::size_t bytes=MOTO_UI_CANVAS_WIDTH*MOTO_NAV_MAP_BOTTOM_Y*2;
+#ifdef ESP_PLATFORM
+    ui.material_pixels=static_cast<std::uint16_t*>(heap_caps_malloc(bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+#else
+    ui.material_pixels=static_cast<std::uint16_t*>(std::malloc(bytes));
+#endif
+    if(!ui.material_pixels) return; // Navigation is never blocked by decoration.
+    ui.material_image.header.magic=LV_IMAGE_HEADER_MAGIC;
+    ui.material_image.header.cf=LV_COLOR_FORMAT_RGB565;
+    ui.material_image.header.w=MOTO_UI_CANVAS_WIDTH;
+    ui.material_image.header.h=MOTO_NAV_MAP_BOTTOM_Y;
+    ui.material_image.header.stride=MOTO_UI_CANVAS_WIDTH*2;
+    ui.material_image.data_size=bytes;
+    ui.material_image.data=reinterpret_cast<const std::uint8_t*>(ui.material_pixels);
+    ui.nav_material=lv_image_create(page);
+    lv_obj_set_pos(ui.nav_material,0,0);
+    lv_image_set_src(ui.nav_material,&ui.material_image);
+    lv_obj_remove_flag(ui.nav_material,static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE));
+    ui.nav_material_timer=lv_timer_create(material_tick,500,nullptr);
+    update_material_pixels();
+}
+
 void create_navigation_page() {
     lv_obj_t *page = ui.pages[MOTO_UI_PAGE_NAVIGATION];
+    create_material(page);
     ui.nav_map = make_layer(page);
     // The map is the topmost hit target across most of the navigation page.
     // Forward swipe gestures to the page/screen. Local demo activation is not
@@ -1628,6 +1549,7 @@ void create_navigation_page() {
     // future online provider must simplify its response to the same limit.
     for(std::uint8_t i = 0; i < MOTO_UI_ROAD_POLYLINE_CAPACITY; ++i) {
         ui.nav_roads[i] = create_map_polyline(ui.nav_map, ui.nav_road_lines[i]);
+        ui.nav_road_lines[i].road_material=true;
         lv_obj_set_size(ui.nav_roads[i], MOTO_UI_CANVAS_WIDTH,
                         MOTO_NAV_MAP_BOTTOM_Y);
         lv_obj_set_style_line_width(ui.nav_roads[i], px(MOTO_MAP_ROAD_WIDTH), 0);
@@ -1644,6 +1566,7 @@ void create_navigation_page() {
     lv_obj_set_pos(ui.nav_map_fade, 0, MOTO_NAV_FADE_START_Y);
     lv_obj_remove_flag(ui.nav_map_fade, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_remove_flag(ui.nav_map_fade, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(ui.nav_map_fade,LV_OBJ_FLAG_HIDDEN); // Fade is applied per geographic primitive.
     lv_obj_add_event_cb(ui.nav_map_fade, draw_map_fade,
                         LV_EVENT_DRAW_MAIN_END, nullptr);
 
@@ -1692,6 +1615,9 @@ void create_navigation_page() {
 
     ui.nav_distance = make_label(page, &moto_font_distance_56, kWhite, "300");
     ui.nav_unit = make_label(page, &lv_font_montserrat_20, kNavUnit, "m");
+    ui.nav_action=make_label(page,&lv_font_montserrat_12,kNavQuiet,"");
+    lv_obj_set_style_text_letter_space(ui.nav_action,1,0);
+    lv_obj_align(ui.nav_action,LV_ALIGN_TOP_MID,0,405);
 
     ui.nav_limit = lv_obj_create(page);
     lv_obj_set_size(ui.nav_limit, MOTO_NAV_SPEED_LIMIT_SIZE,
@@ -1732,7 +1658,7 @@ void create_navigation_page() {
     // symbol instead of a dashboard of technical status labels.
     ui.nav_lifecycle = make_layer(page);
     lv_obj_set_style_bg_color(ui.nav_lifecycle, kBlack, 0);
-    lv_obj_set_style_bg_opa(ui.nav_lifecycle, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(ui.nav_lifecycle, LV_OPA_TRANSP, 0);
     lv_obj_add_flag(ui.nav_lifecycle, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_add_flag(ui.nav_lifecycle, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
@@ -1759,7 +1685,7 @@ void create_navigation_page() {
     lv_obj_align(ui.nav_lifecycle_title, LV_ALIGN_TOP_MID, 0, px(231));
 
     ui.nav_lifecycle_subtitle = make_label(
-        ui.nav_lifecycle, &moto_font_nav_16, kSoft, "请打开手机应用");
+        ui.nav_lifecycle, &lv_font_montserrat_12, kNavQuiet, "OPEN MOTO GPS ON YOUR PHONE");
     lv_obj_set_width(ui.nav_lifecycle_subtitle, px(280));
     lv_obj_set_style_text_align(ui.nav_lifecycle_subtitle,
                                 LV_TEXT_ALIGN_CENTER, 0);
@@ -2073,6 +1999,14 @@ extern "C" void moto_nav_ui_create(void) {
     create_compass_page();
     create_music_page();
     create_page_dots();
+    auto *rim=lv_obj_create(ui.pages[MOTO_UI_PAGE_NAVIGATION]);
+    lv_obj_remove_style_all(rim);
+    lv_obj_set_pos(rim,1,1);lv_obj_set_size(rim,464,464);
+    lv_obj_set_style_radius(rim,LV_RADIUS_CIRCLE,0);
+    lv_obj_set_style_border_width(rim,2,0);
+    lv_obj_set_style_border_color(rim,kBlack,0);
+    lv_obj_set_style_border_opa(rim,180,0);
+    lv_obj_remove_flag(rim,static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE));
     // Press events are delivered to the topmost object under the finger, not
     // necessarily to its page. Register once across the finished tree so any
     // touch reliably wakes the dots, including the map and music controls.
@@ -2112,7 +2046,7 @@ extern "C" void moto_nav_ui_set_motion_state(const moto_ui_state_t *state) {
     // QMI8658 samples arrive at high frequency. Only the route polyline or
     // compass rose actually changes with yaw; labels, arcs and hidden pages
     // remain untouched so LVGL submits a small, bounded dirty region.
-    if(ui.page == MOTO_UI_PAGE_NAVIGATION) {
+    if(ui.page == MOTO_UI_PAGE_NAVIGATION && ui.decision.geometry) {
         update_building_geometry(state);
         update_road_geometry(state);
         update_route_geometry(state);
@@ -2132,6 +2066,18 @@ extern "C" void moto_nav_ui_set_phone_connection(
         connection == MOTO_UI_PHONE_ONLINE &&
         ui.phone_connection != MOTO_UI_PHONE_ONLINE;
     ui.phone_connection = connection;
+    if(ui.nav_map) update_navigation(&ui.latest_state);
+    if(connection!=MOTO_UI_PHONE_ONLINE) {
+        ui.decision={};
+        ui.decision.scene=connection==MOTO_UI_PHONE_CONNECTING?moto::design::Scene::PhoneConnecting:moto::design::Scene::PhoneOffline;
+        ui.decision.title=connection==MOTO_UI_PHONE_CONNECTING?"CONNECTING":"PHONE DISCONNECTED";
+        ui.decision.subtitle=connection==MOTO_UI_PHONE_CONNECTING?"KEEP YOUR PHONE NEARBY":"OPEN MOTO GPS ON YOUR PHONE";
+        set_navigation_guidance_visible(false);
+        if(ui.nav_action) lv_obj_add_flag(ui.nav_action,LV_OBJ_FLAG_HIDDEN);
+        for(auto *o:{ui.nav_route,ui.nav_route_shadow,ui.nav_marker}) if(o) lv_obj_add_flag(o,LV_OBJ_FLAG_HIDDEN);
+        ui.nav_route_target_count=ui.nav_route_point_count=0;
+    }
+
     if(became_online) {
         ui.lifecycle_success_active = true;
         if(ui.nav_success_timer != nullptr) {
@@ -2158,7 +2104,18 @@ extern "C" void moto_nav_ui_set_reduce_motion(uint8_t reduce_motion) {
             lv_timer_resume(ui.nav_lifecycle_timer);
         }
     }
+    ui.ambient.settings.reduce_motion=ui.reduce_motion;
     refresh_lifecycle();
+}
+
+extern "C" void moto_nav_ui_set_appearance(const moto_ui_appearance_t *s) {
+    if(!s) return;
+    moto::design::configure(ui.ambient,*s);
+    moto_nav_ui_set_reduce_motion(s->reduce_motion);
+    update_material_pixels();
+}
+extern "C" void moto_nav_ui_get_appearance(moto_ui_appearance_t *s) {
+    if(s) *s=ui.ambient.settings;
 }
 
 extern "C" void moto_nav_ui_set_page(moto_ui_page_t page) {
@@ -2207,7 +2164,7 @@ extern "C" void moto_nav_ui_set_music_command_callback(
 
 extern "C" void moto_nav_ui_set_demo_active(uint8_t enabled) {
     ui.demo_active = enabled != 0;
-    refresh_lifecycle();
+    if(ui.nav_map) update_navigation(&ui.latest_state);
 }
 
 extern "C" void moto_nav_ui_set_demo_change_callback(

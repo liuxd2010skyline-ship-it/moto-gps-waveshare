@@ -118,6 +118,11 @@ moto_ui_state_t base_state() {
   state.gps_accuracy_m = 5;
   state.online = 1;
   state.has_destination = 1;
+  state.has_usable_fix = 1;
+  state.has_next_maneuver = 1;
+  state.geometry_matched = 1;
+  state.total_distance_valid = 1;
+  state.speed_limit_validated = 1; // Explicitly trusted fixture only.
   state.route_identity = 77;
   state.route_generation = 1;
   state.map_scene_revision = 4;
@@ -133,8 +138,8 @@ void fill_route(moto_ui_state_t& state, int count) {
   count = count < 0 ? MOTO_UI_ROUTE_POINT_CAPACITY : count;
   state.route_point_count = static_cast<std::uint8_t>(count);
   for (int i = 0; i < count; ++i) {
-    state.route_points[i] = {static_cast<std::int16_t>(40 + i * 16),
-                             static_cast<std::int16_t>(233 + (i % 2) * 40)};
+    state.route_points[i] = {static_cast<std::int16_t>(207 + (i % 3) * 20),
+                             static_cast<std::int16_t>(300 - i * 16)};
   }
 }
 
@@ -330,7 +335,7 @@ void test_motion_frames_interpolate_then_settle_without_residue() {
   moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
   moto_ui_state_t state = base_state();
   state.route_point_count = 3;
-  state.route_points[0] = {233, 254};
+  state.route_points[0] = {207, 300};
   state.route_points[1] = {233, 150};
   state.route_points[2] = {233, 30};
   state.road_point_count = 2;
@@ -355,6 +360,8 @@ void test_motion_frames_interpolate_then_settle_without_residue() {
   for (int index = 0; index < 2; ++index) state.road_points[index].x += 110;
   for (int index = 0; index < 4; ++index) state.building_points[index].x -= 90;
   moto_nav_ui_set_reduce_motion(0);
+  auto appearance = moto_ui_appearance_t{62, 0, 85, 0};
+  moto_nav_ui_set_appearance(&appearance); // Isolate route interpolation from decoration.
   moto_nav_ui_set_motion_state(&state);
   pump(10);  // 50 ms contains two 25 ms interpolation opportunities.
   const auto intermediate = frame_hash();
@@ -440,7 +447,7 @@ void test_native_visual_frame_and_concave_building() {
   state.building_footprints[0] = {0, 6, 0};
   moto_nav_ui_set_state(&state);
   pump(260);
-  const Frame frame = capture();
+  Frame frame = capture();
   const auto pixel = [&frame](int x, int y) {
     const std::size_t offset = (static_cast<std::size_t>(y) * kWidth + x) * 2;
     return static_cast<std::uint16_t>(frame.bytes[offset]) |
@@ -457,6 +464,35 @@ void test_native_visual_frame_and_concave_building() {
 
   const char* capture_path = std::getenv("MOTO_NAV_CAPTURE_PPM");
   if(capture_path != nullptr && capture_path[0] != '\0') {
+    if(const char* scene_path=std::getenv("MOTO_NAV_CAPTURE_SCENE")) {
+      std::ifstream input(scene_path);CHECK(input.good());
+      int count=0;input>>count;CHECK(count>=2 && count<=MOTO_UI_ROUTE_POINT_CAPACITY);
+      state.route_point_count=count;
+      for(int i=0;i<count;++i) input>>state.route_points[i].x>>state.route_points[i].y;
+      input>>count;CHECK(count<=MOTO_UI_ROAD_POLYLINE_CAPACITY);
+      state.road_polyline_count=count;state.road_point_count=0;
+      for(int i=0;i<count;++i) {
+        int kind=0,points=0;input>>kind>>points;
+        auto& span=state.road_polylines[i];span={state.road_point_count,static_cast<std::uint8_t>(points),static_cast<std::uint8_t>(kind)};
+        CHECK(state.road_point_count+points<=MOTO_UI_ROAD_POINT_CAPACITY);
+        for(int j=0;j<points;++j) {auto& point=state.road_points[state.road_point_count++];input>>point.x>>point.y;}
+      }
+      input>>count;CHECK(count<=MOTO_UI_BUILDING_FOOTPRINT_CAPACITY);
+      state.building_footprint_count=count;state.building_point_count=0;
+      for(int i=0;i<count;++i) {
+        int kind=0,points=0;std::uint32_t key=0;input>>kind>>key>>points;
+        state.building_footprints[i]={state.building_point_count,static_cast<std::uint8_t>(points),static_cast<std::uint8_t>(kind),key};
+        CHECK(state.building_point_count+points<=MOTO_UI_BUILDING_POINT_CAPACITY);
+        for(int j=0;j<points;++j) {auto& point=state.building_points[state.building_point_count++];input>>point.x>>point.y;}
+      }
+      CHECK(!input.fail());state.map_scene_revision++;
+      state.speed_limit_validated=0;
+      const std::string kind=std::getenv("MOTO_NAV_CAPTURE_KIND")?std::getenv("MOTO_NAV_CAPTURE_KIND"):"rich";
+      if(kind=="roads" || kind=="route") state.building_point_count=state.building_footprint_count=0;
+      if(kind=="route") state.road_point_count=state.road_polyline_count=0;
+      if(kind=="gps") state.gnss_stale=1;
+      moto_nav_ui_set_state(&state);pump(260);frame=capture();
+    }
     std::ofstream out(capture_path, std::ios::binary);
     out << "P6\n" << kWidth << ' ' << kHeight << "\n255\n";
     for(int y = 0; y < kHeight; ++y) {
@@ -472,6 +508,21 @@ void test_native_visual_frame_and_concave_building() {
     }
     CHECK(out.good());
   }
+}
+
+void test_material_moves_and_freezes_without_moving_guidance() {
+  moto_nav_ui_create();moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_ui_appearance_t appearance{62,75,85,0};moto_nav_ui_set_appearance(&appearance);
+  auto state=base_state();fill_route(state,12);moto_nav_ui_set_state(&state);
+  pump(1'100);const auto first=capture();pump(400);const auto second=capture();
+  CHECK(first.hash!=second.hash);
+  constexpr std::size_t hud_start=kWidth*350*2;
+  CHECK(std::equal(first.bytes.begin()+hud_start,first.bytes.end(),second.bytes.begin()+hud_start));
+  appearance.reduce_motion=1;moto_nav_ui_set_appearance(&appearance);
+  const auto frozen=capture();pump(500);CHECK(capture().hash==frozen.hash);
+  appearance.reduce_motion=0;moto_nav_ui_set_appearance(&appearance);
+  state.gnss_stale=1;moto_nav_ui_set_state(&state);
+  const auto invalid=capture();pump(500);CHECK(capture().hash==invalid.hash);
 }
 
 }  // namespace
@@ -501,6 +552,7 @@ int main(int argc, char **argv) {
   test_capacity_payloads_render_stably();
   test_motion_frames_interpolate_then_settle_without_residue();
   test_diagonal_map_pixels_are_independent_of_partial_buffer_height();
+  test_material_moves_and_freezes_without_moving_guidance();
   test_native_visual_frame_and_concave_building();
 
   // Terminal screens run last: they tear the full UI down.

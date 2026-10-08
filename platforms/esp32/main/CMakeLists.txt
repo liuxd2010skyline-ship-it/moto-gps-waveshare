@@ -30,6 +30,7 @@ idf_component_register(
         "${MOTO_SHARED_UI_DISTANCE_FONT}"
         "${MOTO_SHARED_UI_ICONS}"
         "${MOTO_SHARED_UI_SOURCE}"
+        "${MOTO_REPOSITORY_ROOT}/shared/nav_ui/src/moto_nav_design_runtime.cpp"
     INCLUDE_DIRS
         "."
         "${MOTO_REPOSITORY_ROOT}/shared"

@@ -652,6 +652,15 @@ struct ContentView: View {
                         Button("前往设置开启定位", action: openSystemSettings)
                     }
                 }
+                Section {
+                    NavigationLink {
+                        RoundScreenAppearanceView(model: model)
+                    } label: {
+                        Label("圆屏外观与亮度", systemImage: "slider.horizontal.3")
+                    }
+                    Text(model.device.appearanceStatus)
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 OfflineMapStatusSection(store: model.surroundingMap,
                                         transferStatus: model.device.mapTransferStatus)
             }

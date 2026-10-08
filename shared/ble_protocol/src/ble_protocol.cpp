@@ -481,6 +481,13 @@ Error validate(const DeviceCommand& value) {
   return value.command_id == 0 ? Error::OutOfRange : Error::None;
 }
 
+Error validate(const DisplayPreferences& v) {
+  if(!v.revision || v.intensity>100 || v.speed>100 || v.travel>100 ||
+     v.reduce_motion>1 || (v.brightness && (v.brightness<10 || v.brightness>100)))
+    return Error::OutOfRange;
+  return Error::None;
+}
+
 template <typename T>
 BytesResult encode_payload(const T& value) {
   const Error validation = validate(value);
@@ -607,6 +614,9 @@ BytesResult encode_payload(const T& value) {
       writer.u8(static_cast<std::uint8_t>(building.building_class));
       write_points(building.points);
     }
+  } else if constexpr (std::is_same_v<T, DisplayPreferences>) {
+    writer.u32(value.revision);writer.u8(value.intensity);writer.u8(value.speed);
+    writer.u8(value.travel);writer.u8(value.reduce_motion);writer.u8(value.brightness);
   } else if constexpr (std::is_same_v<T, DeviceCommand>) {
     writer.u8(static_cast<std::uint8_t>(value.kind));
     writer.u16(value.command_id);
@@ -887,6 +897,15 @@ MessageResult decode_map_scene(ByteView payload) {
     }
   }
   return decoded_result(std::move(value), reader);
+}
+
+MessageResult decode_display_preferences(ByteView payload) {
+  Reader reader(payload); DisplayPreferences value;
+  if(begin_payload(reader)) {
+    value.revision=reader.u32();value.intensity=reader.u8();value.speed=reader.u8();
+    value.travel=reader.u8();value.reduce_motion=reader.u8();value.brightness=reader.u8();
+  }
+  reader.require_end();return decoded_result(value,reader);
 }
 
 MessageResult decode_device_command(ByteView payload) {
@@ -1454,6 +1473,11 @@ bool DeviceCommand::operator==(const DeviceCommand& rhs) const noexcept {
                   rhs.event_time_ms);
 }
 
+bool DisplayPreferences::operator==(const DisplayPreferences& r) const noexcept {
+  return std::tie(revision,intensity,speed,travel,reduce_motion,brightness)==
+         std::tie(r.revision,r.intensity,r.speed,r.travel,r.reduce_motion,r.brightness);
+}
+
 MessageType message_type(const Message& message) noexcept {
   return std::visit(
       [](const auto& value) {
@@ -1474,6 +1498,8 @@ MessageType message_type(const Message& message) noexcept {
           return MessageType::MediaState;
         } else if constexpr (std::is_same_v<T, MapScene>) {
           return MessageType::MapScene;
+        } else if constexpr (std::is_same_v<T, DisplayPreferences>) {
+          return MessageType::DisplayPreferences;
         } else {
           return MessageType::DeviceCommand;
         }
@@ -1500,6 +1526,7 @@ MessageResult decode_message(MessageType type, ByteView payload) {
       return decode_traffic_deviation(payload);
     case MessageType::MediaState: return decode_media_state(payload);
     case MessageType::MapScene: return decode_map_scene(payload);
+    case MessageType::DisplayPreferences: return decode_display_preferences(payload);
     case MessageType::DeviceCommand:
       return decode_device_command(payload);
   }

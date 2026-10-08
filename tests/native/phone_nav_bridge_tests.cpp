@@ -620,7 +620,40 @@ void test_map_scene_bounds_reach_presenter_and_revisions_wrap() {
 
 }  // namespace
 
+bool record_preferences(const moto::ble::Message& message, std::uint8_t, void* context) {
+  if(const auto* value=std::get_if<moto::ble::DisplayPreferences>(&message)) {
+    static_cast<std::vector<moto::ble::DisplayPreferences>*>(context)->push_back(*value);
+    return true;
+  }
+  return false;
+}
+
+void test_preferences_echo_only_after_render_application() {
+  moto::nav::NavPresenter presenter;PhoneNavBridge bridge(presenter);
+  std::vector<moto::ble::DisplayPreferences> echoes;
+  bridge.set_sender(record_preferences,&echoes);
+  moto::ble::DisplayPreferences preferences;preferences.revision=1;
+  CHECK(bridge.on_message(make_message(preferences,1))!=moto::ble::AckStatus::Ok);
+  bridge.on_link_state(true);
+  moto::ble::ConnectionStatus phone;phone.role=moto::ble::EndpointRole::Phone;
+  phone.session_id=123;phone.state=moto::ble::ConnectionState::Starting;
+  CHECK(bridge.on_message(make_message(phone,2))==moto::ble::AckStatus::Ok);
+  phone.state=moto::ble::ConnectionState::Ready;
+  CHECK(bridge.on_message(make_message(phone,3))==moto::ble::AckStatus::Ok);
+  preferences.revision=2;preferences.intensity=80;
+  CHECK(bridge.on_message(make_message(preferences,4))==moto::ble::AckStatus::Ok);
+  CHECK(echoes.empty());
+  moto::test::phone_nav_bridge_set_board_lock_available(false);
+  pump(bridge);CHECK(echoes.empty());
+  preferences.revision=3;preferences.speed=90;
+  CHECK(bridge.on_message(make_message(preferences,5))==moto::ble::AckStatus::Ok);
+  moto::test::phone_nav_bridge_set_board_lock_available(true);
+  pump(bridge);CHECK(echoes.size()==1 && echoes.back()==preferences);
+  bridge.on_link_state(false);
+}
+
 int main() {
+  test_preferences_echo_only_after_render_application();
   test_sender_is_called_without_bridge_state_lock();
   test_navigation_and_touch_updates_are_serialized();
   test_ble_submission_never_waits_for_lvgl_and_retries_latest_state();

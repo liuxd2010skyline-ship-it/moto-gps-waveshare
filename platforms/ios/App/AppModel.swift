@@ -9,6 +9,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var navigationFailure: String?
     @Published private(set) var isNavigationActive = false
     @Published private(set) var isDemoActive = false
+    @Published var roundScreenAppearance = RoundScreenAppearance.load() {
+        didSet {
+            roundScreenAppearance.save()
+            bluetooth.sendDisplayPreferences(roundScreenAppearance)
+        }
+    }
 
     @Published var destinationQuery = ""
     @Published private(set) var placeResults: [PlaceSearchResult] = []
@@ -105,6 +111,7 @@ final class AppModel: ObservableObject {
 
         searchLocation.prepare()
         mediaController.start()
+        bluetooth.sendDisplayPreferences(roundScreenAppearance)
         bluetooth.connect()
 
         #if DEBUG
@@ -129,6 +136,8 @@ final class AppModel: ObservableObject {
         }
         return false
     }
+
+    func retryRoundScreenAppearance() { bluetooth.retryDisplayPreferences() }
 
     /// Navigation can start before BLE is ready. The central retains the newest
     /// snapshot and synchronizes it when the round display reconnects.

@@ -23,6 +23,7 @@ lv_obj_t* brightness_slider = nullptr;
 lv_obj_t* save_status = nullptr;
 bool shown = false;
 std::uint8_t saved_brightness = 100;
+moto_ui_appearance_t saved_appearance{62,75,85,0};
 board_port_battery_t latest_battery{};
 
 lv_obj_t* label(const char* text, int y, const lv_font_t* font) {
@@ -158,6 +159,12 @@ void device_settings_load_preferences() {
     nvs_handle_t storage = 0;
     if (nvs_open(kNamespace, NVS_READONLY, &storage) == ESP_OK) {
       nvs_get_u8(storage, kBrightnessKey, &brightness);
+      std::uint32_t appearance=62U|(75U<<8)|(85U<<16);
+      nvs_get_u32(storage,"appearance",&appearance);
+      saved_appearance={static_cast<std::uint8_t>(appearance&255),
+          static_cast<std::uint8_t>((appearance>>8)&255),
+          static_cast<std::uint8_t>((appearance>>16)&255),
+          static_cast<std::uint8_t>((appearance>>24)&1)};
       nvs_close(storage);
     }
   } else {
@@ -171,6 +178,7 @@ void device_settings_load_preferences() {
 
 void device_settings_create() {
   if (overlay != nullptr) return;
+  moto_nav_ui_set_appearance(&saved_appearance);
   overlay = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(overlay);
   lv_obj_set_size(overlay, MOTO_DISPLAY_WIDTH, MOTO_DISPLAY_HEIGHT);
@@ -202,6 +210,24 @@ void device_settings_create() {
   button("BACK", "back", 163, 353, 140);
   label("PWR: SETTINGS / BACK", 415, &lv_font_montserrat_16);
   refresh_brightness();
+}
+
+void device_settings_apply_phone_preferences(const moto_ui_appearance_t* appearance, unsigned char brightness) {
+  if(!appearance) return;
+  const bool changed=saved_appearance.intensity!=appearance->intensity ||
+      saved_appearance.speed!=appearance->speed || saved_appearance.travel!=appearance->travel ||
+      saved_appearance.reduce_motion!=appearance->reduce_motion;
+  saved_appearance=*appearance;
+  if(changed) {
+    nvs_handle_t storage=0;
+    if(nvs_open(kNamespace,NVS_READWRITE,&storage)==ESP_OK) {
+      const std::uint32_t packed=appearance->intensity|(appearance->speed<<8)|
+          (appearance->travel<<16)|(appearance->reduce_motion<<24);
+      if(nvs_set_u32(storage,"appearance",packed)==ESP_OK) nvs_commit(storage);
+      nvs_close(storage);
+    }
+  }
+  if(brightness>=10 && brightness<=100) { apply_brightness(brightness);save_brightness(); }
 }
 
 void device_settings_start_monitor() {

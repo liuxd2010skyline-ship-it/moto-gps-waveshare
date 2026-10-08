@@ -31,6 +31,22 @@ jobs:
         run: |
           npm ci --prefix backend
           npm --prefix backend test
+      - name: Capture actual LVGL scenes using real offline geometry
+        run: |
+          python3 scripts/preview/generate_native_capture_scene.py --output build/native/capture-scene.txt
+          for scene in rich roads route gps; do
+            MOTO_NAV_CAPTURE_SCENE="$PWD/build/native/capture-scene.txt" \
+            MOTO_NAV_CAPTURE_KIND="$scene" \
+            MOTO_NAV_CAPTURE_PPM="$PWD/build/native/$scene.ppm" \
+            build/native/tests/native/nav_ui_render_tests
+          done
+      - name: Upload actual native display frames
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: MotoGPS-V6-native-display-frames
+          path: build/native/*.ppm
+          if-no-files-found: error
+          retention-days: 30
       - name: Verify public map fixtures
         run: |
           node scripts/generate_jinan_demo_fixture.mjs --check

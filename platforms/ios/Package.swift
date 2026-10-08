@@ -14,6 +14,8 @@ let package = Package(
     ],
     targets: [
         .target(name: "MotoNavigationCore"),
+        .target(name: "MotoDisplayPreferences", path: "App/DisplayPreferences",
+                exclude: ["MotoAmbientPreview.h", "MotoAmbientPreview.mm"]),
         .systemLibrary(name: "CSQLite", pkgConfig: "sqlite3"),
         .target(name: "MotoMapGeometry", dependencies: ["CSQLite"], path: "App/Adapters/OfflineMap",
                 exclude: ["OfflineMapSceneCoordinator.swift", "SurroundingMapStore.swift", "MapTilePlanner.swift"],
@@ -27,5 +29,6 @@ let package = Package(
             dependencies: ["MotoNavigationCore"]
         ),
         .testTarget(name: "MotoMapGeometryTests", dependencies: ["MotoMapGeometry"]),
+        .testTarget(name: "MotoDisplayPreferencesTests", dependencies: ["MotoDisplayPreferences"]),
     ]
 )

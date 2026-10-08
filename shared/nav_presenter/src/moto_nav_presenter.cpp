@@ -321,6 +321,10 @@ void project_building_context(const NavSnapshot& snapshot,
         static_cast<std::uint8_t>(first),
         static_cast<std::uint8_t>(count),
         static_cast<std::uint8_t>(span.building_class),
+        static_cast<std::uint32_t>(
+            std::llround(snapshot.building_context_points[first].latitude_deg * 1e6)) ^
+        (static_cast<std::uint32_t>(
+            std::llround(snapshot.building_context_points[first].longitude_deg * 1e6)) * 16777619U),
     };
     ++accepted_footprints;
   }
@@ -371,6 +375,15 @@ void NavPresenter::update(const NavSnapshot& snapshot) {
   ui_state_.has_destination = snapshot.has_destination ? 1 : 0;
   ui_state_.route_request_in_flight =
       snapshot.route_request_in_flight ? 1 : 0;
+  ui_state_.has_usable_fix = snapshot.has_usable_fix;
+  ui_state_.gnss_stale = snapshot.gnss_stale;
+  ui_state_.off_route = snapshot.off_route;
+  ui_state_.has_next_maneuver = snapshot.has_next_maneuver;
+  ui_state_.geometry_matched = snapshot.has_route_view;
+  ui_state_.total_distance_valid = snapshot.total_distance_m > 0;
+  ui_state_.maneuver_identity = snapshot.has_next_maneuver ? snapshot.next_maneuver.id : 0;
+  // The existing provider scalar has no segment-validity proof. Never guess.
+  ui_state_.speed_limit_validated = snapshot.speed_limit_validated;
   ui_state_.route_identity = route_identity(snapshot.route_id);
   ui_state_.route_generation = snapshot.route_generation;
   ui_state_.map_scene_revision = snapshot.map_scene_revision;

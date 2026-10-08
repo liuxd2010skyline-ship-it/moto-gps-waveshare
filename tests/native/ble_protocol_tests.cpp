@@ -581,6 +581,32 @@ void test_link_watchdog() {
   CHECK(!watchdog.armed());
 }
 
+void test_display_preferences_contract() {
+  DisplayPreferences preferences;
+  preferences.revision=88;preferences.intensity=70;preferences.speed=90;
+  preferences.travel=55;preferences.reduce_motion=1;preferences.brightness=65;
+  const Message original{preferences};
+  const auto payload=encode_or_fail(original);
+  CHECK(payload.size()==10);
+  const auto frames=fragment_or_fail(MessageType::DisplayPreferences,32,payload,20,AckRequested);
+  CHECK(frames.size()==2);
+  Reassembler assembler;ReassemblyResult last;
+  for(std::size_t i=0;i<frames.size();++i) last=assembler.push(ByteView(frames[i]),100+i);
+  CHECK(last.state==ReassemblyState::Complete);
+  const auto decoded=decode_message(last.message.type,ByteView(last.message.payload));
+  CHECK(decoded.ok() && decoded.value==original);
+  auto invalid=preferences;invalid.brightness=9;
+  CHECK(encode_message(Message{invalid}).error==Error::OutOfRange);
+  invalid=preferences;invalid.revision=0;
+  CHECK(encode_message(Message{invalid}).error==Error::OutOfRange);
+  invalid=preferences;invalid.intensity=101;
+  CHECK(encode_message(Message{invalid}).error==Error::OutOfRange);
+  invalid=preferences;invalid.reduce_motion=2;
+  CHECK(encode_message(Message{invalid}).error==Error::OutOfRange);
+  auto trailing=payload;trailing.push_back(0);
+  CHECK(decode_message(MessageType::DisplayPreferences,ByteView(trailing)).error==Error::TrailingPayload);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -599,6 +625,7 @@ int main(int argc, char** argv) {
   test_supersession_duplicate_message_and_wrap();
   test_validation_failures();
   test_link_watchdog();
+  test_display_preferences_contract();
 
   if (failures != 0) {
     std::cerr << failures << " BLE protocol checks failed\n";

@@ -16,6 +16,7 @@ struct BLEDeviceSnapshot: Equatable {
     var negotiatedProtocol = "--"
     var lastCommandID: UInt16?
     var mapTransferStatus = "尚未同步底图"
+    var appearanceStatus = "连接后同步外观"
 }
 
 enum BLECommandDisposition: UInt8 {
@@ -158,6 +159,7 @@ final class ESP32BLECentral: NSObject {
     private static let writeWithoutResponsePacingMs: UInt64 = 15
     private static let mapSceneCapability: UInt32 = 1 << 7
     private static let denseMapSceneCapability: UInt32 = 1 << 8
+    private static let displayPreferencesCapability: UInt32 = 1 << 9
 
     private struct RouteGeometrySignature: Equatable {
         let routeID: String
@@ -180,6 +182,9 @@ final class ESP32BLECentral: NSObject {
     private var pendingNavigationState: MotoNavCoreSnapshot?
     private var pendingMediaState: PhoneMediaState?
     private var pendingMapScene: OfflineMapSceneWindow?
+    private var appearanceDelivery = RoundScreenAppearanceDelivery()
+    private var appearanceDebounceTask: Task<Void, Never>?
+    private var appearanceDebouncing = false
     private var mapSceneDelivery = BLEMapSceneDelivery()
     private var negotiatedFrameSize = 20
     private var mapTransferCounts = (roads: 0, buildings: 0)
@@ -277,6 +282,53 @@ final class ESP32BLECentral: NSObject {
     func sendMapScene(_ scene: OfflineMapSceneWindow) {
         pendingMapScene = scene
         flushPendingMapScene()
+    }
+
+    func sendDisplayPreferences(_ value: RoundScreenAppearance) {
+        appearanceDelivery.stage(value)
+        snapshot.appearanceStatus = protocolReady ? "等待同步" : "连接后同步外观"
+        appearanceDebounceTask?.cancel()
+        appearanceDebouncing = true
+        appearanceDebounceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled, let self else { return }
+            self.appearanceDebouncing = false
+            self.appearanceDebounceTask = nil
+            self.flushDisplayPreferences()
+        }
+    }
+
+    func retryDisplayPreferences() {
+        appearanceDelivery.resetSession()
+        flushDisplayPreferences()
+    }
+
+    private func flushDisplayPreferences() {
+        guard protocolReady, let codec else { return }
+        guard (peerCapabilities & Self.displayPreferencesCapability) != 0 else {
+            snapshot.appearanceStatus = "请更新圆屏固件以调节外观"
+            return
+        }
+        snapshot.appearanceStatus = appearanceDelivery.status
+        guard !appearanceDebouncing, !mapSceneDelivery.isWritingFragments,
+              outboundFrames.count < 8,
+              appearanceDelivery.shouldSend(nowMs: Self.monotonicMs()) else { return }
+        let value = appearanceDelivery.value
+        let input = MotoBLEDisplayPreferences()
+        input.revision = appearanceDelivery.revision
+        input.intensity = UInt8(value.intensity)
+        input.speed = UInt8(value.speed)
+        input.travel = UInt8(value.travel)
+        input.reduceMotion = value.reduceMotion ? 1 : 0
+        input.brightness = UInt8(value.brightness)
+        do {
+            let frames = try codec.encodeDisplayPreferences(input)
+            try send(frames)
+            appearanceDelivery.sent(nowMs: Self.monotonicMs())
+            snapshot.appearanceStatus = appearanceDelivery.status
+        } catch {
+            snapshot.appearanceStatus = "外观同步失败 · 可点击重试"
+        }
     }
 
     private func startScan() {
@@ -534,6 +586,7 @@ final class ESP32BLECentral: NSObject {
                     sendNavigationSnapshot(pendingNavigationState)
                 }
                 flushPendingMediaState()
+                flushDisplayPreferences()
                 flushPendingMapScene()
             }
         } catch {
@@ -607,6 +660,11 @@ final class ESP32BLECentral: NSObject {
     }
 
     private func clearProtocolState() {
+        appearanceDebounceTask?.cancel()
+        appearanceDebounceTask = nil
+        appearanceDebouncing = false
+        appearanceDelivery.resetSession()
+        snapshot.appearanceStatus = "连接后同步外观"
         gattSetupTimeoutTask?.cancel()
         gattSetupTimeoutTask = nil
         handshakeTask?.cancel()
@@ -1015,6 +1073,7 @@ final class ESP32BLECentral: NSObject {
                     // fragments. Keep only the latest navigation/media state
                     // until this bounded map finishes writing.
                     if self.mapSceneDelivery.isWritingFragments { continue }
+                    self.flushDisplayPreferences()
                     try self.send(
                         codec.encodeHeartbeat(
                             withSessionID: self.sessionID,
@@ -1389,6 +1448,18 @@ extension ESP32BLECentral: @preconcurrency CBPeripheralDelegate {
             guard protocolReady else {
                 trace("ignored restored business message before handshake")
                 codec.resetInboundState()
+                return
+            }
+            if let preferences = inbound.displayPreferences {
+                var echoed = RoundScreenAppearance()
+                echoed.intensity = Int(preferences.intensity)
+                echoed.speed = Int(preferences.speed)
+                echoed.travel = Int(preferences.travel)
+                echoed.reduceMotion = preferences.reduceMotion != 0
+                echoed.brightness = Int(preferences.brightness)
+                if appearanceDelivery.acceptEcho(revision: preferences.revision, value: echoed) {
+                    snapshot.appearanceStatus = appearanceDelivery.status
+                }
                 return
             }
             if let ack = inbound.acknowledgement {

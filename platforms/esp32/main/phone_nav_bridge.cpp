@@ -1,4 +1,7 @@
 #include "phone_nav_bridge.h"
+#ifdef ESP_PLATFORM
+#include "device_settings.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -563,6 +566,13 @@ moto::ble::AckStatus PhoneNavBridge::on_message(
           consume_media(value);
         } else if constexpr (std::is_same_v<T, moto::ble::MapScene>) {
           return consume_map_scene(value);
+        } else if constexpr (std::is_same_v<T, moto::ble::DisplayPreferences>) {
+          {
+            const std::lock_guard<std::mutex> lock(state_mutex_);
+            if(!link_active_ || ui_phone_connection_!=MOTO_UI_PHONE_ONLINE) return moto::ble::AckStatus::InvalidState;
+            display_preferences_=value;
+          }
+          request_render(RenderPreferences);
         } else if constexpr (std::is_same_v<T, moto::ble::Ack>) {
           ESP_LOGD(kTag, "phone ack sequence=%u command=%u status=%u",
                    value.acknowledged_sequence, value.command_id,
@@ -632,6 +642,7 @@ void PhoneNavBridge::consume_navigation(
     phone_snapshot.cross_track_distance_m =
         static_cast<float>(input.cross_track_dm) / 10.0F;
     phone_snapshot.speed_limit_kph = input.speed_limit_kph;
+    phone_snapshot.speed_limit_validated = has_flag(input.flags,moto::ble::NavigationSpeedLimitValidated);
     phone_snapshot.route_progress_m = input.route_progress_m;
     phone_snapshot.total_distance_m = input.total_distance_m;
     phone_snapshot.remaining_distance_m = input.remaining_distance_m;
@@ -942,6 +953,7 @@ void PhoneNavBridge::render_pending() {
   const bool navigation = (requested & RenderNavigation) != 0U;
   const bool motion = !navigation && (requested & RenderMotion) != 0U;
   const bool media = (requested & RenderMedia) != 0U;
+  const bool preferences=(requested & RenderPreferences)!=0U;
   {
     const std::lock_guard<std::mutex> lock(state_mutex_);
     if (navigation || motion) {
@@ -952,6 +964,7 @@ void PhoneNavBridge::render_pending() {
       render_demo_active_ = demo_active_;
       render_music_page_enabled_ = music_page_enabled_;
     }
+    if(preferences) render_display_preferences_=display_preferences_;
     if (media) {
       render_media_state_ = media_state_;
     }
@@ -975,6 +988,14 @@ void PhoneNavBridge::render_pending() {
 #endif
     request_render(requested);
     return;
+  }
+  if(preferences) {
+    const auto& p=render_display_preferences_;
+    const moto_ui_appearance_t a{p.intensity,p.speed,p.travel,p.reduce_motion};
+    moto_nav_ui_set_appearance(&a);
+#ifdef ESP_PLATFORM
+    device_settings_apply_phone_preferences(&a,p.brightness);
+#endif
   }
   if (navigation) {
     moto_nav_ui_set_phone_connection(render_phone_connection_);
@@ -1001,6 +1022,11 @@ void PhoneNavBridge::render_pending() {
     moto_nav_ui_set_music_state(&state);
   }
   board_port_unlock();
+  if(preferences) {
+    SendCallback callback=nullptr;void* context=nullptr;
+    {const std::lock_guard<std::mutex> lock(state_mutex_);if(link_active_) {callback=sender_;context=sender_context_;}}
+    if(callback) callback(moto::ble::Message(render_display_preferences_),moto::ble::Urgent,context);
+  }
 }
 
 #ifdef ESP_PLATFORM

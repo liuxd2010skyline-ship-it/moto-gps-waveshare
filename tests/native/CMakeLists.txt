@@ -88,6 +88,13 @@ if(MOTO_USING_NAV_UI_TEST_STUB)
 endif()
 
 add_executable(ble_protocol_tests ble_protocol_tests.cpp)
+
+add_executable(nav_design_runtime_tests nav_design_runtime_tests.cpp
+  "${CMAKE_CURRENT_LIST_DIR}/../../shared/nav_ui/src/moto_nav_design_runtime.cpp")
+target_include_directories(nav_design_runtime_tests PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/../../shared/nav_ui/include")
+target_compile_features(nav_design_runtime_tests PRIVATE cxx_std_17)
+add_test(NAME nav_design_runtime_tests COMMAND nav_design_runtime_tests)
 target_link_libraries(ble_protocol_tests PRIVATE moto_ble_protocol)
 target_compile_features(ble_protocol_tests PRIVATE cxx_std_17)
 target_compile_definitions(ble_protocol_tests PRIVATE

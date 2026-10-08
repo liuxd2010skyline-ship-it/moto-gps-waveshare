@@ -116,6 +116,7 @@ enum class MessageType : std::uint8_t {
   TrafficDeviation = 0x12,
   MediaState = 0x13,
   MapScene = 0x14,
+  DisplayPreferences = 0x15,
   DeviceCommand = 0x20,
 };
 
@@ -276,6 +277,7 @@ enum Capability : std::uint32_t {
   // Same v1 wire layout; larger bounded window. Phones must keep the legacy
   // 16/128 building budget unless the device advertises this capability.
   CapabilityDenseMapScene = 1U << 8U,
+  CapabilityDisplayPreferences = 1U << 9U,
 };
 
 struct ConnectionStatus {
@@ -370,13 +372,14 @@ enum NavigationFlag : std::uint16_t {
   NavigationRouteRequestInFlight = 1U << 5U,
   NavigationTrafficRequestInFlight = 1U << 6U,
   NavigationHasRouteView = 1U << 7U,
+  NavigationSpeedLimitValidated = 1U << 8U,
 };
 
 constexpr std::uint16_t kKnownNavigationFlags =
     NavigationHasDestination | NavigationHasFix | NavigationGnssStale |
     NavigationOffRoute | NavigationHasNextManeuver |
     NavigationRouteRequestInFlight | NavigationTrafficRequestInFlight |
-    NavigationHasRouteView;
+    NavigationHasRouteView | NavigationSpeedLimitValidated;
 
 struct NavigationSnapshot {
   NavigationState state = NavigationState::Idle;
@@ -555,6 +558,15 @@ struct DeviceCommand {
   bool operator==(const DeviceCommand& rhs) const noexcept;
 };
 
+// Acknowledged phone->device settings, gated by CapabilityDisplayPreferences.
+// brightness=0 preserves the device's existing hardware brightness.
+struct DisplayPreferences {
+  std::uint32_t revision = 1;
+  std::uint8_t intensity = 62, speed = 75, travel = 85;
+  std::uint8_t reduce_motion = 0, brightness = 0;
+  bool operator==(const DisplayPreferences& rhs) const noexcept;
+};
+
 using Message = std::variant<ConnectionStatus,
                              Heartbeat,
                              Ack,
@@ -563,6 +575,7 @@ using Message = std::variant<ConnectionStatus,
                              TrafficDeviation,
                              MediaState,
                              MapScene,
+                             DisplayPreferences,
                              DeviceCommand>;
 
 using MessageResult = Result<Message>;
