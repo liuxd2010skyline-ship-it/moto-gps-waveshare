@@ -1,6 +1,6 @@
 # V6/B 固件与 App 实现记录
 
-基线：`8757841a44ac31ecd6a9065daa22f2a2b99211e7`；466 × 466 微雪 1.75C，ESP32-S3；B Soft Graphite 色板。此文记录实际代码，构建结果另以同一源码提交的 Actions 为准。
+基线：`8757841a44ac31ecd6a9065daa22f2a2b99211e7`；466 × 466 微雪 1.75C，ESP32-S3；B Soft Graphite 色板。此文记录实际代码与对应 Actions 产物；最终两端源码及共享树见下表。
 
 ## 本轮进入产品的内容
 
@@ -59,6 +59,24 @@ App 的外观样例调用相同的 C++ 柔光运行库；iPhone 正常百度路�
 - 固件复用 466×350 RGB565 PSRAM 缓存：326,200 字节；采样用两行 118 点 RGB 浮点缓存：2,832 字节。4 px 采样后插值再量化；不按帧申请整屏内存。
 - 目标更新 2 Hz；连续三帧计算耗时超过 100 ms 时降低至 1 Hz。实机能耗、帧时和显示亮度需安装后确认，原生测试不能替代硬件测量。
 
+## 最终编译与交付
+
+| 产物 | 实际源码 / 构建 |
+|---|---|
+| ESP32 固件 | `c6ab2710724522ae9ac8107c89e5d0c580894f05`；[构建 37759094008](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/37759094008)成功 |
+| iPhone 0.4.0 (6) | `1a68190504f3b51f8d14e618bae2f054eef889b4`；[构建 37761463032](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/37761463032)成功 |
+| 最新源码检查 | [37761462945](https://github.com/liuxd2010skyline-ship-it/moto-gps-waveshare/actions/runs/37761462945)：原生 11/11、Swift 核心、协议、地物及设计契约检查通过 |
+
+App 后续提交只修正两个 SwiftUI 设置区块的 header/footer 写法和一个 Objective-C 导入的 Swift 方法名，并更新已经审查的 iOS 树锁。两个提交的固件树均为 `c975b7ef37121feca6fa039f5aede34a241f8024`，共享树均为 `f58098fe192d067c30e8aafab5b128deab387c17`，可配套更新。
+
+- 固件 artifact `11540904701`；ZIP SHA-256 `2b6c3d38b4baf7abaedeb32f1de9620653c0710608cba42e8e3abcb6b7eb9c01`；本地七个清单文件全部核验通过。
+- App artifact `11543199466`；ZIP SHA-256 `64fbefc0c2f870acebdd614d5ca26ae92f9ba0276cb9d05f7e30e62046fc9a52`。
+- 内含未签名 IPA SHA-256 `786fc110922d959e030004e559999f391601cecb81589fec8079c22822ec64fb`；实际 Info.plist 为 0.4.0 (6)、`com.liuxd2010skyline.motogps`、iOS 17.0 起。按此前已成功使用的签名安装方法安装。
+- 两份 CodeQL 报告中六个既有只读 SQLite 查询项按固定源码逐行审查，阻断项为 0；Swift/C++ 扫描及 IPA ZIP 检查通过。
+- 已从最终 IPA 实际取出北京 SQLite，清单/文件哈希一致，`quick_check=ok`、MGPS v1、GCJ-02；60,620,800 bytes，265,109 条道路、135,411 个建筑外轮廓。数据库 SHA-256 `158e57f5806a0b10c6035bb0246345708ac0c161cdb958672bb485e1d62d08a9`。
+- 本地交付目录为 `delivery/V6-B-0.4.0-6-c6ab271/`，含刷写脚本、安装与复测说明、下载/内部文件核验记录和四种真实原生渲染帧。脚本默认只核验；加 `-Write` 才刷写。
+- 此次未把新固件刷入实物，冷启动及两端联机验收仍待执行。没有捕获旧故障的串口日志，不声称已确认黑屏唯一根因。
+
 ## 已完成验证
 
 ### 开机动画后黑屏的加固与验证边界
@@ -75,6 +93,6 @@ App 的外观样例调用相同的 C++ 柔光运行库；iPhone 正常百度路�
 - 2026-10-08 本地原生完整构建：11/11 CTest 通过，包含 LVGL 真实渲染、四种数据画面、凹建筑填充、局部缓冲高度一致、柔光移动/冻结、HUD 不随柔光移动。
 - BLE 新设置的往返、范围/尾部拒绝、20 字节分片、渲染线程应用后回传与合并检查通过；原坐标、导航、断连、惯性航向和电源策略回归通过。
 - 统一色板生成检查和浏览器 V6/B 契约检查通过。
-- GitHub 的 Source checks、iPhone SDK/CodeQL/IPA 与 ESP-IDF 固件构建必须对应同一源码提交。构建产物下载后应核验其 SHA256SUMS；旧安装包不包含本轮功能。
+- GitHub 的 Source checks、iPhone SDK/CodeQL/IPA 与 ESP-IDF 固件构建必须记录对应源码；若只有手机界面编译修正而固件与共享树一致，可使用上表已核验的配套产物。构建产物下载后应核验其 SHA256SUMS；旧安装包不包含本轮功能。
 
 原生审查图片使用公开济南 SQLite 几何，受真实协议容量约束；它们是固件代码的 RGB565 帧，不是北京实测截图，也没有使用百栋合成街区替代实际数据。
