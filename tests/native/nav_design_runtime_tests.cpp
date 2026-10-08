@@ -71,13 +71,13 @@ void color() {
     float last=0;for(int y=294;y<=350;++y) {CHECK(fade_at(y)>=last);last=fade_at(y);}
     CHECK(building_color(42,false)==building_color(42,false));
     CHECK(road_color(0x62696D,0)!=road_color(0x62696D,349));
-    // The spatial pattern is stationary and unbiased over a complete 8x8 tile.
+    // The spatial pattern is stationary and unbiased over a complete 64x64 tile.
     double mean=0;
-    for(int y=0;y<8;++y)for(int x=0;x<8;++x) {
+    for(int y=0;y<64;++y)for(int x=0;x<64;++x) {
         const auto p=rgb565(30,35,40,x,y);
-        CHECK(p==rgb565(30,35,40,x+8,y+8));mean+=((p>>11)&31)*255.0/31;
+        CHECK(p==rgb565(30,35,40,x+64,y+64));mean+=((p>>11)&31)*255.0/31;
     }
-    CHECK(std::abs(mean/64-30)<0.2);
+    CHECK(std::abs(mean/4096-30)<0.02);
 }
 }
 int main() {scenes();motion();color();return failures?EXIT_FAILURE:EXIT_SUCCESS;}

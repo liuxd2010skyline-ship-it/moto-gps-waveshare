@@ -7,6 +7,8 @@
     moto::design::MaterialScratch _scratch;
     std::vector<std::uint16_t> _nativePixels;
     std::vector<std::uint8_t> _pixels;
+    UIImage *_cachedImage;
+    uint8_t _cachedIntensity;
 }
 - (instancetype)init {
     self=[super init];
@@ -19,8 +21,8 @@
 }
 - (UIImage *)imageWithIntensity:(uint8_t)intensity speed:(uint8_t)speed
                           travel:(uint8_t)travel reduceMotion:(BOOL)reduceMotion nowMs:(uint32_t)nowMs {
-    moto::design::configure(_ambient,{intensity,speed,travel,static_cast<std::uint8_t>(reduceMotion)});
-    moto::design::tick(_ambient,nowMs,true);
+    if(_cachedImage && _cachedIntensity==intensity) return _cachedImage;
+    moto::design::configure(_ambient,{intensity,speed,travel,1});
     moto::design::render_material(_ambient,_nativePixels.data(),_scratch);
     for(int y=0;y<350;++y) for(int x=0;x<466;++x) {
         const auto color=_nativePixels[y*466+x];
@@ -45,6 +47,7 @@
     if(image) CGImageRelease(image);
     CGColorSpaceRelease(space);
     CGDataProviderRelease(provider);CFRelease(data);
+    _cachedImage=result;_cachedIntensity=intensity;
     return result;
 }
 @end

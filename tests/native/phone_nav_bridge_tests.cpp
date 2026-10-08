@@ -648,7 +648,8 @@ void test_preferences_echo_only_after_render_application() {
   preferences.revision=3;preferences.speed=90;
   CHECK(bridge.on_message(make_message(preferences,5))==moto::ble::AckStatus::Ok);
   moto::test::phone_nav_bridge_set_board_lock_available(true);
-  pump(bridge);CHECK(echoes.size()==1 && echoes.back()==preferences);
+  auto applied=preferences;applied.reduce_motion=1;
+  pump(bridge);CHECK(echoes.size()==1 && echoes.back()==applied);
   bridge.on_link_state(false);
 }
 

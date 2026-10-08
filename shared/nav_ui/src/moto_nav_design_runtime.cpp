@@ -1,5 +1,6 @@
 #include "moto_nav_design_runtime.hpp"
 #include "moto_map_visual_style.h"
+#include "moto_nav_dither_tile.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -112,8 +113,9 @@ std::uint32_t road_color(std::uint32_t base,float y) noexcept {
     return static_cast<std::uint32_t>((r<<16)|(g<<8)|b);
 }
 std::uint16_t rgb565(float r,float g,float b,int x,int y) noexcept {
-    static constexpr std::uint8_t bayer[64]={0,48,12,60,3,51,15,63,32,16,44,28,35,19,47,31,8,56,4,52,11,59,7,55,40,24,36,20,43,27,39,23,2,50,14,62,1,49,13,61,34,18,46,30,33,17,45,29,10,58,6,54,9,57,5,53,42,26,38,22,41,25,37,21};
-    const float threshold=(bayer[((y&7)<<3)|(x&7)]+.5F)/64.F;
+    // A fixed blue-noise tile avoids the old visible 8x8 ordered grid. It
+    // preserves the mean design color and never creates temporal shimmer.
+    const float threshold=(kDitherTile[((y&63)<<6)|(x&63)]+.5F)/256.F;
     const auto q=[threshold](float v,int n){return std::clamp(static_cast<int>(std::floor(std::clamp(v,0.F,255.F)*n/255.F+threshold)),0,n);};
     return static_cast<std::uint16_t>((q(r,31)<<11)|(q(g,63)<<5)|q(b,31));
 }

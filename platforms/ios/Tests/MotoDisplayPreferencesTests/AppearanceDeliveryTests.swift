@@ -33,4 +33,24 @@ final class AppearanceDeliveryTests: XCTestCase {
         value.brightness = 0
         XCTAssertEqual(value.bounded.brightness, 0)
     }
+
+    func testStaticReleaseMigratesOldSettingsAndSupportsFullyOff() throws {
+        let old = try JSONDecoder().decode(RoundScreenAppearance.self,
+            from: Data(#"{"intensity":62,"speed":75,"travel":85,"reduceMotion":false,"brightness":0}"#.utf8))
+        XCTAssertTrue(old.bounded.reduceMotion)
+        var value = old.bounded
+        value.backgroundEnabled = false
+        XCTAssertEqual(value.bounded.intensity, 0)
+        XCTAssertFalse(value.backgroundEnabled)
+        let restored = try JSONDecoder().decode(RoundScreenAppearance.self,
+            from: JSONEncoder().encode(value)).bounded
+        XCTAssertEqual(restored.intensity, 0)
+        var enabled = restored
+        enabled.backgroundEnabled = true
+        XCTAssertEqual(enabled.intensity, 62)
+        XCTAssertTrue(enabled.reduceMotion)
+        var delivery = RoundScreenAppearanceDelivery()
+        delivery.stage(restored)
+        XCTAssertTrue(delivery.acceptEcho(revision: delivery.revision, value: restored))
+    }
 }

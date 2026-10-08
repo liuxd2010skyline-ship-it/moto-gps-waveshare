@@ -512,15 +512,27 @@ void test_native_visual_frame_and_concave_building() {
   }
 }
 
-void test_material_moves_and_freezes_without_moving_guidance() {
+void test_static_material_and_fully_off_are_idle_without_losing_guidance() {
   moto_nav_ui_create();moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
   moto_ui_appearance_t appearance{62,75,85,0};moto_nav_ui_set_appearance(&appearance);
   auto state=base_state();fill_route(state,12);moto_nav_ui_set_state(&state);
   pump(1'100);const auto first=capture();pump(400);const auto second=capture();
-  CHECK(first.hash!=second.hash);
+  CHECK(first.hash==second.hash);
+  moto_ui_appearance_t applied{};moto_nav_ui_get_appearance(&applied);
+  CHECK(applied.reduce_motion==1); // Even an old phone requesting animation is safe.
+  const auto idle_flushes=flush_count;
+  pump(400);CHECK(flush_count==idle_flushes);
   constexpr std::size_t hud_start=kWidth*350*2;
   CHECK(std::equal(first.bytes.begin()+hud_start,first.bytes.end(),second.bytes.begin()+hud_start));
-  appearance.reduce_motion=1;moto_nav_ui_set_appearance(&appearance);
+  appearance.intensity=0;moto_nav_ui_set_appearance(&appearance);
+  const auto off=capture();CHECK(off.hash!=first.hash);
+  CHECK(std::equal(first.bytes.begin()+hud_start,first.bytes.end(),off.bytes.begin()+hud_start));
+  const auto off_flushes=flush_count;
+  pump(400);CHECK(flush_count==off_flushes && capture().hash==off.hash);
+  // A duplicate preference/brightness sync cannot redraw the static material.
+  moto_nav_ui_set_appearance(&appearance);pump(40);CHECK(flush_count==off_flushes);
+  appearance.intensity=62;moto_nav_ui_set_appearance(&appearance);
+  CHECK(capture().hash==first.hash);
   const auto frozen=capture();pump(500);CHECK(capture().hash==frozen.hash);
   appearance.reduce_motion=0;moto_nav_ui_set_appearance(&appearance);
   state.gnss_stale=1;moto_nav_ui_set_state(&state);
@@ -556,7 +568,7 @@ int main(int argc, char **argv) {
   test_capacity_payloads_render_stably();
   test_motion_frames_interpolate_then_settle_without_residue();
   test_diagonal_map_pixels_are_independent_of_partial_buffer_height();
-  test_material_moves_and_freezes_without_moving_guidance();
+  test_static_material_and_fully_off_are_idle_without_losing_guidance();
   test_native_visual_frame_and_concave_building();
 
   // Terminal screens run last: they tear the full UI down.

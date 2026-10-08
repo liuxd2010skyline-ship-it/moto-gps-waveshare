@@ -110,14 +110,12 @@ struct Ui {
     lv_obj_t *nav_map = nullptr;
     lv_obj_t *nav_material = nullptr;
     lv_obj_t *nav_action = nullptr;
-    lv_timer_t *nav_material_timer = nullptr;
     lv_image_dsc_t material_image{};
     std::uint16_t *material_pixels = nullptr;
     moto::design::Ambient ambient{};
     moto::design::MaterialScratch material_scratch{};
     moto::design::Decision decision{};
     moto_ui_state_t latest_state{};
-    std::uint32_t material_slow_frames = 0;
     lv_obj_t *nav_buildings[MOTO_UI_BUILDING_FOOTPRINT_CAPACITY]{};
     MapPolyline nav_building_lines[MOTO_UI_BUILDING_FOOTPRINT_CAPACITY]{};
     lv_point_precise_t nav_building_points[
@@ -232,17 +230,18 @@ void reset_ui_state() {
     // offline map buffers make Ui about 15 KiB, so that temporary can consume
     // nearly the whole ESP-IDF main-task stack before LVGL is called.  Clear
     // the retained instance in place and restore the two non-zero defaults.
-    for(auto *timer:{ui.nav_material_timer,ui.page_dots_timer,ui.nav_route_motion_timer,
+    for(auto *timer:{ui.page_dots_timer,ui.nav_route_motion_timer,
                      ui.nav_lifecycle_timer,ui.nav_success_timer}) {
         if(timer) lv_timer_delete(timer);
     }
-    if(ui.material_pixels) std::free(ui.material_pixels);
+    if(ui.material_pixels) { lv_image_cache_drop(&ui.material_image); std::free(ui.material_pixels); }
     std::memset(&ui, 0, sizeof(ui));
 #ifdef ESP_PLATFORM
     moto::design::initialize(ui.ambient, esp_random());
 #else
     moto::design::initialize(ui.ambient, 0x6D6F746F);
 #endif
+    ui.ambient.settings.reduce_motion = 1;
     ui.page = MOTO_UI_PAGE_NAVIGATION;
     ui.page_dots_visible = true;
     ui.nav_maneuver_type = MOTO_MANEUVER_STRAIGHT;
@@ -365,6 +364,8 @@ void install_interaction_wake(lv_obj_t *object) {
     }
 }
 
+void schedule_map_motion();
+
 void show_page(moto_ui_page_t page, bool reveal_on_same_page = false) {
     if(ui.terminal_screen) return;
     if(page < MOTO_UI_PAGE_NAVIGATION || page >= MOTO_UI_PAGE_COUNT) return;
@@ -384,6 +385,7 @@ void show_page(moto_ui_page_t page, bool reveal_on_same_page = false) {
     // Navigation state arrives continuously. Only a real page transition or
     // user action may restart the five-second affordance timer.
     if(changed || reveal_on_same_page) reveal_page_dots();
+    if(changed) schedule_map_motion();
 }
 
 void gesture_event(lv_event_t *) {
@@ -742,8 +744,27 @@ bool apply_building_geometry_frame(bool rebind_lines = true) {
     return pixels_changed || rebind_lines;
 }
 
+void schedule_map_motion() {
+    if(!ui.nav_route_motion_timer) return;
+    const auto pending=[](const float* x,const float* y,const float* tx,const float* ty,int count) {
+        for(int i=0;i<count;++i)
+            if(std::abs(tx[i]-x[i])>=0.08F || std::abs(ty[i]-y[i])>=0.08F) return true;
+        return false;
+    };
+    const bool moving=ui.page==MOTO_UI_PAGE_NAVIGATION && ui.decision.geometry &&
+        (pending(ui.nav_route_x,ui.nav_route_y,ui.nav_route_target_x,ui.nav_route_target_y,ui.nav_route_point_count) ||
+         pending(ui.nav_road_x,ui.nav_road_y,ui.nav_road_target_x,ui.nav_road_target_y,ui.nav_road_point_count) ||
+         pending(ui.nav_building_x,ui.nav_building_y,ui.nav_building_target_x,ui.nav_building_target_y,ui.nav_building_point_count));
+    if(moving) lv_timer_resume(ui.nav_route_motion_timer);
+    else lv_timer_pause(ui.nav_route_motion_timer);
+}
+
 void route_motion_tick(lv_timer_t *) {
-    if(ui.nav_route_target_count < 2 || ui.nav_route_point_count < 2) return;
+    if(ui.page != MOTO_UI_PAGE_NAVIGATION ||
+       ui.nav_route_target_count < 2 || ui.nav_route_point_count < 2) {
+        if(ui.nav_route_motion_timer) lv_timer_pause(ui.nav_route_motion_timer);
+        return;
+    }
     // 0.39 at 25 ms has approximately the same smoothing time constant as
     // the old 0.56 at 40 ms, but supplies smaller and more frequent steps.
     // Screen coordinates need subpixel precision, not geographic doubles.
@@ -803,6 +824,8 @@ void route_motion_tick(lv_timer_t *) {
         pixels_changed = apply_route_geometry_frame(false) || pixels_changed;
     }
     if(pixels_changed) lv_obj_invalidate(ui.nav_map);
+    if(!route_moved && !roads_moved && !buildings_moved &&
+       ui.nav_route_motion_timer) lv_timer_pause(ui.nav_route_motion_timer);
 }
 
 void update_road_geometry(const moto_ui_state_t *state) {
@@ -1328,7 +1351,7 @@ void update_nav_status(const moto_ui_state_t *state) {
 void update_navigation(const moto_ui_state_t *state) {
     ui.latest_state=*state;
     ui.decision=moto::design::decide(*state,ui.demo_active?MOTO_UI_PHONE_ONLINE:ui.phone_connection);
-    moto::design::navigation_event(ui.ambient,*state,ui.decision.guidance);
+    // The static material never changes with route events or distance bands.
     const bool visible=ui.decision.geometry;
     if(visible) {
         update_building_geometry(state);update_road_geometry(state);update_route_geometry(state);
@@ -1477,21 +1500,15 @@ void create_page_dots() {
 
 void update_material_pixels() {
     if(!ui.material_pixels || !ui.nav_material) return;
-    const auto started=lv_tick_get();
+    lv_image_cache_drop(&ui.material_image);
     moto::design::render_material(ui.ambient,ui.material_pixels,ui.material_scratch);
     lv_obj_invalidate(ui.nav_material);
-    if(lv_tick_elaps(started)>100 && ui.nav_material_timer) {
-        if(++ui.material_slow_frames>=3) lv_timer_set_period(ui.nav_material_timer,1000);
-    } else ui.material_slow_frames=0;
-}
-void material_tick(lv_timer_t*) {
-    if(ui.page!=MOTO_UI_PAGE_NAVIGATION) {
-        moto::design::tick(ui.ambient,lv_tick_get(),false); return;
-    }
-    if(moto::design::tick(ui.ambient,lv_tick_get(),ui.decision.motion && !ui.reduce_motion))
-        update_material_pixels();
 }
 void create_material(lv_obj_t* page) {
+    if(ui.nav_material || ui.ambient.settings.intensity == 0) return;
+    // This release renders a static material once. There is deliberately no
+    // background timer, drift, event pulse or periodic map invalidation.
+    ui.ambient.settings.reduce_motion = 1;
     // One retained cropped 466x350 texture (326200 bytes), never a full-screen
     // offscreen buffer or a new allocation per frame. Prefer the board's PSRAM.
     constexpr std::size_t bytes=MOTO_UI_CANVAS_WIDTH*MOTO_NAV_MAP_BOTTOM_Y*2;
@@ -1509,11 +1526,18 @@ void create_material(lv_obj_t* page) {
     ui.material_image.data_size=bytes;
     ui.material_image.data=reinterpret_cast<const std::uint8_t*>(ui.material_pixels);
     ui.nav_material=lv_image_create(page);
+    lv_obj_move_background(ui.nav_material);
     lv_obj_set_pos(ui.nav_material,0,0);
     lv_image_set_src(ui.nav_material,&ui.material_image);
     lv_obj_remove_flag(ui.nav_material,static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE));
-    ui.nav_material_timer=lv_timer_create(material_tick,500,nullptr);
     update_material_pixels();
+}
+
+void release_material() {
+    // Delete the image before releasing the storage its descriptor references.
+    if(ui.nav_material) { lv_obj_delete(ui.nav_material); ui.nav_material=nullptr; }
+    if(ui.material_pixels) { lv_image_cache_drop(&ui.material_image); std::free(ui.material_pixels); ui.material_pixels=nullptr; }
+    ui.material_image = {};
 }
 
 void create_navigation_page() {
@@ -1695,6 +1719,7 @@ void create_navigation_page() {
     lv_obj_align(ui.nav_lifecycle_subtitle, LV_ALIGN_TOP_MID, 0, px(278));
 
     ui.nav_lifecycle_timer = lv_timer_create(lifecycle_tick, 40, nullptr);
+    lv_timer_pause(ui.nav_lifecycle_timer); // Static status artwork; updates are event-driven.
     ui.nav_success_timer = lv_timer_create(connection_success_timeout,
                                             kConnectionSuccessHoldMs,
                                             nullptr);
@@ -1948,10 +1973,6 @@ extern "C" void moto_nav_ui_show_boot_screen(void) {
 extern "C" void moto_nav_ui_show_power_off_screen(void) {
     if(ui.screen == nullptr) return;
     ui.terminal_screen = true;
-    if(ui.nav_material_timer != nullptr) {
-        lv_timer_delete(ui.nav_material_timer);
-        ui.nav_material_timer = nullptr;
-    }
     if(ui.page_dots_timer != nullptr) {
         lv_timer_delete(ui.page_dots_timer);
         ui.page_dots_timer = nullptr;
@@ -2046,6 +2067,7 @@ extern "C" void moto_nav_ui_set_state(const moto_ui_state_t *state) {
         case MOTO_UI_PAGE_MUSIC:
         case MOTO_UI_PAGE_COUNT: break;
     }
+    schedule_map_motion();
 }
 
 extern "C" void moto_nav_ui_set_motion_state(const moto_ui_state_t *state) {
@@ -2057,6 +2079,7 @@ extern "C" void moto_nav_ui_set_motion_state(const moto_ui_state_t *state) {
         update_building_geometry(state);
         update_road_geometry(state);
         update_route_geometry(state);
+        schedule_map_motion();
     } else if(ui.page == MOTO_UI_PAGE_COMPASS) {
         update_compass(state);
     }
@@ -2106,21 +2129,23 @@ extern "C" void moto_nav_ui_set_reduce_motion(uint8_t reduce_motion) {
     if(ui.terminal_screen) return;
     ui.reduce_motion = reduce_motion != 0;
     if(ui.nav_lifecycle_timer != nullptr) {
-        if(ui.reduce_motion) {
-            lv_timer_pause(ui.nav_lifecycle_timer);
-        } else {
-            lv_timer_resume(ui.nav_lifecycle_timer);
-        }
+        lv_timer_pause(ui.nav_lifecycle_timer);
     }
-    ui.ambient.settings.reduce_motion=ui.reduce_motion;
+    ui.ambient.settings.reduce_motion=1;
     refresh_lifecycle();
 }
 
 extern "C" void moto_nav_ui_set_appearance(const moto_ui_appearance_t *s) {
     if(!s || ui.terminal_screen) return;
-    moto::design::configure(ui.ambient,*s);
-    moto_nav_ui_set_reduce_motion(s->reduce_motion);
-    update_material_pixels();
+    const auto previous_intensity=ui.ambient.settings.intensity;
+    auto effective=*s;
+    effective.reduce_motion=1; // Old phone preferences cannot restart decoration.
+    moto::design::configure(ui.ambient,effective);
+    if(ui.ambient.settings.intensity==0) { release_material(); return; }
+    if(!ui.nav_material) create_material(ui.pages[MOTO_UI_PAGE_NAVIGATION]);
+    else if(previous_intensity!=ui.ambient.settings.intensity) update_material_pixels();
+    // Background freezing is separate from navigation interpolation and the
+    // accessibility reduce-motion setting; moving maps remain smooth.
 }
 extern "C" void moto_nav_ui_get_appearance(moto_ui_appearance_t *s) {
     if(s) *s=ui.ambient.settings;

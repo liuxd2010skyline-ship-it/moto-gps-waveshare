@@ -990,7 +990,8 @@ void PhoneNavBridge::render_pending() {
     return;
   }
   if(preferences) {
-    const auto& p=render_display_preferences_;
+    auto& p=render_display_preferences_;
+    p.reduce_motion=1; // Echo the static policy actually applied by this release.
     const moto_ui_appearance_t a{p.intensity,p.speed,p.travel,p.reduce_motion};
     moto_nav_ui_set_appearance(&a);
 #ifdef ESP_PLATFORM

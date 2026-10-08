@@ -17,14 +17,14 @@ struct RoundScreenAppearanceView: View {
                     .frame(maxWidth: .infinity)
             }.listRowBackground(Color.clear)
             Section {
-                slider("存在感", value: $model.roundScreenAppearance.intensity)
-                slider("运动速度", value: $model.roundScreenAppearance.speed)
-                slider("移动幅度", value: $model.roundScreenAppearance.travel)
-                Toggle("减少动态", isOn: $model.roundScreenAppearance.reduceMotion)
+                Toggle("静态柔光背景", isOn: $model.roundScreenAppearance.backgroundEnabled)
+                if model.roundScreenAppearance.backgroundEnabled {
+                    slider("存在感", value: $model.roundScreenAppearance.intensity, range: 1 ... 100)
+                }
             } header: {
                 Text("柔光")
             } footer: {
-                Text("使用已确定的石墨色板。速度为 0 或打开减少动态时，柔光静止；路线、箭头和文字不随柔光移动。")
+                Text("柔光只在设置改变时生成。关闭后进入基础模式，完全释放柔光图像；定位、道路、建筑、路线和操作继续正常更新。")
             }
             Section("屏幕亮度") {
                 Toggle("保留圆屏本机亮度", isOn: Binding(
@@ -65,7 +65,7 @@ private struct RoundScreenAppearancePreview: View {
     let appearance: RoundScreenAppearance
     let systemReduceMotion: Bool
     @State private var renderer = MotoAmbientPreview()
-    private var frozen: Bool { systemReduceMotion || appearance.reduceMotion || appearance.speed == 0 }
+    private var frozen: Bool { true }
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.5, paused: frozen)) { timeline in
             Canvas { context, size in

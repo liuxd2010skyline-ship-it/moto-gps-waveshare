@@ -21,9 +21,10 @@ lv_obj_t* battery_status = nullptr;
 lv_obj_t* brightness_value = nullptr;
 lv_obj_t* brightness_slider = nullptr;
 lv_obj_t* save_status = nullptr;
+lv_obj_t* background_value = nullptr;
 bool shown = false;
 std::uint8_t saved_brightness = 100;
-moto_ui_appearance_t saved_appearance{62,75,85,0};
+moto_ui_appearance_t saved_appearance{62,75,85,1};
 board_port_battery_t latest_battery{};
 
 lv_obj_t* label(const char* text, int y, const lv_font_t* font) {
@@ -111,7 +112,14 @@ void slider_event(lv_event_t* event) {
 
 void button_event(lv_event_t* event) {
   const auto* action = static_cast<const char*>(lv_event_get_user_data(event));
-  if (*action == 'b') {
+  if (*action == 't') {
+    moto_ui_appearance_t appearance{};
+    moto_nav_ui_get_appearance(&appearance);
+    appearance.intensity = appearance.intensity == 0 ? 62 : 0;
+    appearance.reduce_motion = 1;
+    moto_nav_ui_set_appearance(&appearance);
+    device_settings_apply_phone_preferences(&appearance, 0);
+  } else if (*action == 'b') {
     device_settings_close();
   } else {
     apply_brightness(static_cast<int>(board_port_get_brightness()) +
@@ -120,7 +128,7 @@ void button_event(lv_event_t* event) {
   }
 }
 
-void button(const char* text, const char* action, int x, int y, int width) {
+lv_obj_t* button(const char* text, const char* action, int x, int y, int width) {
   lv_obj_t* object = lv_button_create(overlay);
   lv_obj_set_pos(object, x, y);
   lv_obj_set_size(object, width, 50);
@@ -134,6 +142,7 @@ void button(const char* text, const char* action, int x, int y, int width) {
   lv_obj_set_style_text_color(title, lv_color_white(), 0);
   lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
   lv_obj_center(title);
+  return title;
 }
 
 void battery_monitor(void*) {
@@ -159,12 +168,12 @@ void device_settings_load_preferences() {
     nvs_handle_t storage = 0;
     if (nvs_open(kNamespace, NVS_READONLY, &storage) == ESP_OK) {
       nvs_get_u8(storage, kBrightnessKey, &brightness);
-      std::uint32_t appearance=62U|(75U<<8)|(85U<<16);
+      std::uint32_t appearance=62U|(75U<<8)|(85U<<16)|(1U<<24);
       nvs_get_u32(storage,"appearance",&appearance);
       saved_appearance={static_cast<std::uint8_t>(appearance&255),
           static_cast<std::uint8_t>((appearance>>8)&255),
           static_cast<std::uint8_t>((appearance>>16)&255),
-          static_cast<std::uint8_t>((appearance>>24)&1)};
+          1}; // Migrate stored animated preferences to the static policy.
       nvs_close(storage);
     }
   } else {
@@ -189,12 +198,12 @@ void device_settings_create() {
   lv_obj_add_flag(overlay, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(overlay, LV_OBJ_FLAG_HIDDEN);
   label("SETTINGS", 34, &lv_font_montserrat_28);
-  label("BATTERY", 86, &lv_font_montserrat_16);
-  battery_value = label("--", 109, &lv_font_montserrat_48);
-  battery_status = label("READING BATTERY", 170, &lv_font_montserrat_16);
-  brightness_value = label("BRIGHTNESS", 217, &lv_font_montserrat_20);
+  label("BATTERY", 66, &lv_font_montserrat_16);
+  battery_value = label("--", 89, &lv_font_montserrat_48);
+  battery_status = label("READING BATTERY", 150, &lv_font_montserrat_16);
+  brightness_value = label("BRIGHTNESS", 193, &lv_font_montserrat_20);
   brightness_slider = lv_slider_create(overlay);
-  lv_obj_set_pos(brightness_slider, 128, 270);
+  lv_obj_set_pos(brightness_slider, 128, 246);
   lv_obj_set_size(brightness_slider, 210, 12);
   lv_slider_set_range(brightness_slider, 10, 100);
   lv_slider_set_value(brightness_slider, board_port_get_brightness(), LV_ANIM_OFF);
@@ -204,10 +213,12 @@ void device_settings_create() {
   lv_obj_add_event_cb(brightness_slider, slider_event, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(brightness_slider, slider_event, LV_EVENT_RELEASED, nullptr);
   lv_obj_add_event_cb(brightness_slider, slider_event, LV_EVENT_PRESS_LOST, nullptr);
-  button("-", "-", 58, 251, 50);
-  button("+", "+", 358, 251, 50);
-  save_status = label("SAVED", 313, &lv_font_montserrat_16);
-  button("BACK", "back", 163, 353, 140);
+  button("-", "-", 58, 227, 50);
+  button("+", "+", 358, 227, 50);
+  background_value = button(saved_appearance.intensity ? "BG: STATIC" : "BG: OFF",
+                            "toggle-background", 103, 286, 260);
+  save_status = label("SAVED", 345, &lv_font_montserrat_16);
+  button("BACK", "back", 163, 371, 140);
   label("PWR: SETTINGS / BACK", 415, &lv_font_montserrat_16);
   refresh_brightness();
 }
@@ -218,11 +229,14 @@ void device_settings_apply_phone_preferences(const moto_ui_appearance_t* appeara
       saved_appearance.speed!=appearance->speed || saved_appearance.travel!=appearance->travel ||
       saved_appearance.reduce_motion!=appearance->reduce_motion;
   saved_appearance=*appearance;
+  saved_appearance.reduce_motion=1;
+  if(background_value) lv_label_set_text(background_value,
+      saved_appearance.intensity ? "BG: STATIC" : "BG: OFF");
   if(changed) {
     nvs_handle_t storage=0;
     if(nvs_open(kNamespace,NVS_READWRITE,&storage)==ESP_OK) {
-      const std::uint32_t packed=appearance->intensity|(appearance->speed<<8)|
-          (appearance->travel<<16)|(appearance->reduce_motion<<24);
+      const std::uint32_t packed=saved_appearance.intensity|(saved_appearance.speed<<8)|
+          (saved_appearance.travel<<16)|(1U<<24);
       if(nvs_set_u32(storage,"appearance",packed)==ESP_OK) nvs_commit(storage);
       nvs_close(storage);
     }

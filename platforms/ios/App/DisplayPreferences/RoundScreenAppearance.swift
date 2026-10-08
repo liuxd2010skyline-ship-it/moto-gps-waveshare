@@ -4,7 +4,7 @@ struct RoundScreenAppearance: Codable, Equatable {
     var intensity = 62
     var speed = 75
     var travel = 85
-    var reduceMotion = false
+    var reduceMotion = true
     // Zero preserves the brightness set with the physical device button.
     var brightness = 0
 
@@ -13,8 +13,14 @@ struct RoundScreenAppearance: Codable, Equatable {
         result.intensity = min(100, max(0, intensity))
         result.speed = min(100, max(0, speed))
         result.travel = min(100, max(0, travel))
+        result.reduceMotion = true // Static release, including migrated preferences.
         result.brightness = brightness == 0 ? 0 : min(100, max(10, brightness))
         return result
+    }
+
+    var backgroundEnabled: Bool {
+        get { intensity > 0 }
+        set { intensity = newValue ? max(1, intensity == 0 ? 62 : intensity) : 0; reduceMotion = true }
     }
 
     private static let key = "MotoGPS.RoundScreenAppearance.v1"
