@@ -118,7 +118,7 @@ std::uint16_t rgb565(float r,float g,float b,int x,int y) noexcept {
     return static_cast<std::uint16_t>((q(r,31)<<11)|(q(g,63)<<5)|q(b,31));
 }
 void initialize(Ambient& a,std::uint32_t seed) noexcept {
-    a={}; a.rng=seed?seed:0x6D6F746F;
+    a=Ambient{}; a.rng=seed?seed:0x6D6F746F;
     // Start in a mature but subdued state, instead of an apparently inert first 10s.
     while(a.next_birth<a.time) { birth(a,a.next_birth); a.next_birth+=range(a,4.5F,8.5F); sample(a); }
     sample(a);
