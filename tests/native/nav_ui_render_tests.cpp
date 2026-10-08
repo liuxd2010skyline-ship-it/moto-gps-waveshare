@@ -221,6 +221,8 @@ void test_clearing_geometry_leaves_no_residue() {
 
 void test_music_page_state_and_fallback() {
   moto_nav_ui_set_music_page_enabled(1);
+  lv_obj_send_event(lv_screen_active(), LV_EVENT_PRESSED, nullptr);
+  lv_obj_send_event(lv_screen_active(), LV_EVENT_GESTURE, nullptr);
   moto_nav_ui_set_page(MOTO_UI_PAGE_MUSIC);
   CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_MUSIC);
 
@@ -566,9 +568,28 @@ int main(int argc, char **argv) {
   pump(400);
   CHECK(boot_again.hash == capture().hash);
 
+  // Shut down an active renderer, not only a boot screen. Pending BLE/IMU
+  // updates and the material timer must never touch deleted widgets.
+  moto_nav_ui_create();
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  auto shutdown_state = base_state();
+  fill_route(shutdown_state, 12);
+  moto_nav_ui_set_state(&shutdown_state);
+  pump(100);
   moto_nav_ui_show_power_off_screen();
   pump(260);
   const Frame power_off = capture();
+  moto_nav_ui_set_state(&shutdown_state);
+  moto_nav_ui_set_motion_state(&shutdown_state);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_OFFLINE);
+  moto_nav_ui_set_reduce_motion(1);
+  const moto_ui_appearance_t shutdown_appearance{80,90,70,0};
+  moto_nav_ui_set_appearance(&shutdown_appearance);
+  moto_nav_ui_set_demo_active(1);
+  moto_nav_ui_set_page(MOTO_UI_PAGE_SPEED);
+  moto_nav_ui_set_music_page_enabled(1);
+  pump(400);
+  CHECK(power_off.hash == capture().hash);
   moto_nav_ui_show_power_off_screen();
   pump(260);
   CHECK(power_off.hash == capture().hash);

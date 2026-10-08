@@ -105,6 +105,7 @@ struct Ui {
     lv_timer_t *page_dots_timer = nullptr;
     moto_ui_page_t page = MOTO_UI_PAGE_NAVIGATION;
     bool page_dots_visible = true;
+    bool terminal_screen = false;
 
     lv_obj_t *nav_map = nullptr;
     lv_obj_t *nav_material = nullptr;
@@ -340,7 +341,7 @@ void hide_page_dots(lv_timer_t *) {
 }
 
 void reveal_page_dots() {
-    if(ui.screen == nullptr || ui.page_dots[0] == nullptr) return;
+    if(ui.screen == nullptr || ui.terminal_screen || ui.page_dots[0] == nullptr) return;
     ui.page_dots_visible = true;
     update_page_dots();
     if(ui.page_dots_timer != nullptr) {
@@ -365,6 +366,7 @@ void install_interaction_wake(lv_obj_t *object) {
 }
 
 void show_page(moto_ui_page_t page, bool reveal_on_same_page = false) {
+    if(ui.terminal_screen) return;
     if(page < MOTO_UI_PAGE_NAVIGATION || page >= MOTO_UI_PAGE_COUNT) return;
     if(page == MOTO_UI_PAGE_MUSIC && !ui.music_page_enabled) {
         page = MOTO_UI_PAGE_NAVIGATION;
@@ -385,6 +387,7 @@ void show_page(moto_ui_page_t page, bool reveal_on_same_page = false) {
 }
 
 void gesture_event(lv_event_t *) {
+    if(ui.terminal_screen) return;
     lv_indev_t *indev = lv_indev_active();
     if(indev == nullptr) return;
     const lv_dir_t direction = lv_indev_get_gesture_dir(indev);
@@ -1885,6 +1888,7 @@ extern "C" void moto_nav_ui_show_boot_screen(void) {
     }
     reset_ui_state();
     ui.screen = lv_screen_active();
+    ui.terminal_screen = true;
     lv_obj_clean(ui.screen);
     lv_obj_remove_flag(ui.screen, LV_OBJ_FLAG_SCROLLABLE);
     const lv_color_t boot_black = LV_COLOR_MAKE(0x00, 0x00, 0x00);
@@ -1943,6 +1947,11 @@ extern "C" void moto_nav_ui_show_boot_screen(void) {
 
 extern "C" void moto_nav_ui_show_power_off_screen(void) {
     if(ui.screen == nullptr) return;
+    ui.terminal_screen = true;
+    if(ui.nav_material_timer != nullptr) {
+        lv_timer_delete(ui.nav_material_timer);
+        ui.nav_material_timer = nullptr;
+    }
     if(ui.page_dots_timer != nullptr) {
         lv_timer_delete(ui.page_dots_timer);
         ui.page_dots_timer = nullptr;
@@ -2025,7 +2034,7 @@ extern "C" void moto_nav_ui_create(void) {
 }
 
 extern "C" void moto_nav_ui_set_state(const moto_ui_state_t *state) {
-    if(state == nullptr || ui.screen == nullptr) return;
+    if(state == nullptr || ui.screen == nullptr || ui.terminal_screen) return;
     show_page(state->page);
     // Hidden pages do not need to be invalidated. Page changes immediately
     // apply a fresh snapshot through PhoneNavBridge, so this keeps every page
@@ -2040,7 +2049,7 @@ extern "C" void moto_nav_ui_set_state(const moto_ui_state_t *state) {
 }
 
 extern "C" void moto_nav_ui_set_motion_state(const moto_ui_state_t *state) {
-    if(state == nullptr || ui.screen == nullptr || state->page != ui.page) return;
+    if(state == nullptr || ui.screen == nullptr || ui.terminal_screen || state->page != ui.page) return;
     // QMI8658 samples arrive at high frequency. Only the route polyline or
     // compass rose actually changes with yaw; labels, arcs and hidden pages
     // remain untouched so LVGL submits a small, bounded dirty region.
@@ -2055,7 +2064,7 @@ extern "C" void moto_nav_ui_set_motion_state(const moto_ui_state_t *state) {
 
 extern "C" void moto_nav_ui_set_phone_connection(
     moto_ui_phone_connection_t connection) {
-    if(ui.screen == nullptr || connection < MOTO_UI_PHONE_OFFLINE ||
+    if(ui.screen == nullptr || ui.terminal_screen || connection < MOTO_UI_PHONE_OFFLINE ||
        connection > MOTO_UI_PHONE_ONLINE) {
         return;
     }
@@ -2094,6 +2103,7 @@ extern "C" void moto_nav_ui_set_phone_connection(
 }
 
 extern "C" void moto_nav_ui_set_reduce_motion(uint8_t reduce_motion) {
+    if(ui.terminal_screen) return;
     ui.reduce_motion = reduce_motion != 0;
     if(ui.nav_lifecycle_timer != nullptr) {
         if(ui.reduce_motion) {
@@ -2107,7 +2117,7 @@ extern "C" void moto_nav_ui_set_reduce_motion(uint8_t reduce_motion) {
 }
 
 extern "C" void moto_nav_ui_set_appearance(const moto_ui_appearance_t *s) {
-    if(!s) return;
+    if(!s || ui.terminal_screen) return;
     moto::design::configure(ui.ambient,*s);
     moto_nav_ui_set_reduce_motion(s->reduce_motion);
     update_material_pixels();
@@ -2117,7 +2127,7 @@ extern "C" void moto_nav_ui_get_appearance(moto_ui_appearance_t *s) {
 }
 
 extern "C" void moto_nav_ui_set_page(moto_ui_page_t page) {
-    if(ui.screen != nullptr) show_page(page, true);
+    if(ui.screen != nullptr && !ui.terminal_screen) show_page(page, true);
 }
 
 extern "C" moto_ui_page_t moto_nav_ui_get_page(void) {
@@ -2131,7 +2141,7 @@ extern "C" void moto_nav_ui_set_page_change_callback(
 }
 
 extern "C" void moto_nav_ui_set_music_state(const moto_music_state_t *state) {
-    if(state == nullptr || ui.screen == nullptr) return;
+    if(state == nullptr || ui.screen == nullptr || ui.terminal_screen) return;
     ui.music = *state;
     copy_text(ui.music_source_text, sizeof(ui.music_source_text),
               state->source_name, "PHONE MEDIA");
@@ -2146,7 +2156,7 @@ extern "C" void moto_nav_ui_set_music_state(const moto_music_state_t *state) {
 }
 
 extern "C" void moto_nav_ui_set_music_page_enabled(uint8_t enabled) {
-    if(ui.screen == nullptr) return;
+    if(ui.screen == nullptr || ui.terminal_screen) return;
     ui.music_page_enabled = enabled != 0;
     if(!ui.music_page_enabled && ui.page == MOTO_UI_PAGE_MUSIC) {
         show_page(MOTO_UI_PAGE_NAVIGATION, true);
@@ -2161,6 +2171,7 @@ extern "C" void moto_nav_ui_set_music_command_callback(
 }
 
 extern "C" void moto_nav_ui_set_demo_active(uint8_t enabled) {
+    if(ui.terminal_screen) return;
     ui.demo_active = enabled != 0;
     if(ui.nav_map) update_navigation(&ui.latest_state);
 }
