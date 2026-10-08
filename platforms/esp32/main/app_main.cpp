@@ -1,3 +1,4 @@
+#include <atomic>
 #include <cstdint>
 
 #include "ble_nav_transport_nimble.h"
@@ -5,8 +6,10 @@
 #include "device_power_policy.hpp"
 #include "device_settings.h"
 #include "esp_err.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_sleep.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -18,6 +21,57 @@
 namespace {
 constexpr char kTag[] = "moto_gps";
 constexpr std::uint64_t kPowerHoldMs = 3'000;
+
+enum class StartupStage : std::uint32_t {
+  BoardInitialization, BootFrame, MainLock, MainConstruction, FirstMainFrame,
+  Ready
+};
+std::atomic<StartupStage> startup_stage{StartupStage::BoardInitialization};
+constexpr std::uint32_t kStartupRecoveryMagic = 0x4D475053;
+RTC_NOINIT_ATTR std::uint32_t startup_recovery_marker;
+RTC_NOINIT_ATTR std::uint32_t startup_previous_stage;
+bool startup_is_recovery = false;
+
+const char* startup_stage_name(StartupStage stage) {
+  switch (stage) {
+    case StartupStage::BoardInitialization: return "board initialization";
+    case StartupStage::BootFrame: return "first boot frame";
+    case StartupStage::MainLock: return "main UI display lock";
+    case StartupStage::MainConstruction: return "main UI construction";
+    case StartupStage::FirstMainFrame: return "first main frame flush";
+    case StartupStage::Ready: return "ready";
+  }
+  return "unknown";
+}
+
+void startup_guard_task(void*) {
+  const auto started = esp_timer_get_time();
+  while (esp_timer_get_time() - started < 20'000'000) {
+    if (startup_stage.load(std::memory_order_acquire) == StartupStage::Ready) {
+      startup_recovery_marker = 0;
+      vTaskDelete(nullptr);
+      return;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+  const auto stage = startup_stage.load(std::memory_order_acquire);
+  if (stage == StartupStage::Ready) {
+    startup_recovery_marker = 0;
+    vTaskDelete(nullptr);
+    return;
+  }
+  ESP_LOGE(kTag, "Startup stalled at %s; recovery attempt=%u",
+           startup_stage_name(stage), startup_is_recovery ? 1U : 0U);
+  if (!startup_is_recovery) {
+    // One retry only. Preserve NVS/bonds and the last failing stage across
+    // this software reset; a persistent fault must not become a reboot loop.
+    startup_previous_stage = static_cast<std::uint32_t>(stage);
+    startup_recovery_marker = kStartupRecoveryMagic;
+    esp_restart();
+  }
+  ESP_LOGE(kTag, "Startup recovery failed; collect the serial boot log");
+  vTaskDelete(nullptr);
+}
 
 moto::ble::AckStatus receive_phone_message(
     const moto::ble::ReassembledMessage& message, void* context) {
@@ -119,6 +173,21 @@ extern "C" void app_main(void) {
 
   ESP_LOGI(kTag, "starting %dx%d RGB565 firmware target",
            MOTO_DISPLAY_WIDTH, MOTO_DISPLAY_HEIGHT);
+  startup_is_recovery = startup_recovery_marker == kStartupRecoveryMagic &&
+                        esp_reset_reason() == ESP_RST_SW;
+  if (startup_is_recovery) {
+    ESP_LOGW(kTag, "Recovering startup stalled at %s",
+             startup_stage_name(static_cast<StartupStage>(startup_previous_stage)));
+  } else {
+    startup_recovery_marker = 0;
+  }
+  ESP_LOGI(kTag, "reset reason=%d", static_cast<int>(esp_reset_reason()));
+  // Independent from the LVGL lock/worker, so a missed DMA completion cannot
+  // leave app_main waiting forever after the logo has finished.
+  if (xTaskCreatePinnedToCore(startup_guard_task, "moto_startup", 4096,
+                             nullptr, 2, nullptr, 1) != pdPASS) {
+    ESP_LOGW(kTag, "Startup guard task allocation failed");
+  }
 
   const esp_err_t init_result = board_port_init();
   if (init_result != ESP_OK) {
@@ -146,7 +215,8 @@ extern "C" void app_main(void) {
     return;
   }
 
-  if (!board_port_lock(UINT32_MAX)) {
+  startup_stage.store(StartupStage::BootFrame, std::memory_order_release);
+  if (!board_port_lock(3'000)) {
     ESP_LOGE(kTag, "could not acquire LVGL lock");
     vTaskDelete(nullptr);
     return;
@@ -168,12 +238,16 @@ extern "C" void app_main(void) {
   // frame before constructing the full production UI.
   vTaskDelay(pdMS_TO_TICKS(1'250));
 
-  if (!board_port_lock(UINT32_MAX)) {
+  startup_stage.store(StartupStage::MainLock, std::memory_order_release);
+  if (!board_port_lock(3'000)) {
     ESP_LOGE(kTag, "could not reacquire LVGL lock after boot screen");
     vTaskDelete(nullptr);
     return;
   }
 
+  startup_stage.store(StartupStage::MainConstruction, std::memory_order_release);
+  ESP_LOGI(kTag, "constructing main UI; main stack headroom=%u bytes",
+           static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
   moto_nav_ui_create();
   static moto::nav::NavPresenter presenter;
   static PhoneNavBridge phone_bridge(presenter);
@@ -189,6 +263,14 @@ extern "C" void app_main(void) {
   moto_nav_ui_set_music_page_enabled(0);
   phone_bridge.install_ui_callbacks();
   device_settings_create();
+  startup_stage.store(StartupStage::FirstMainFrame, std::memory_order_release);
+  // Finish the handoff before background services allocate memory or begin
+  // producing navigation updates. Do not rely on a future timer to redraw.
+  lv_obj_invalidate(lv_screen_active());
+  lv_refr_now(display);
+  ESP_LOGI(kTag, "first main UI frame submitted; main stack headroom=%u bytes",
+           static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+  startup_stage.store(StartupStage::Ready, std::memory_order_release);
   board_port_unlock();
   device_settings_start_monitor();
 

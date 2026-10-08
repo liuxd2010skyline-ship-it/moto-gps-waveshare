@@ -534,15 +534,17 @@ int main(int argc, char **argv) {
   if(extra_pool_bytes < 0) return EXIT_FAILURE;
   init_display(buffer_rows, extra_pool_bytes);
 
-  // Production cadence: the boot animation completes before the full UI is
-  // created, so settle it before moto_nav_ui_create().
+  // A delayed or failed handoff must keep a visible mark rather than erase
+  // itself. The main screen owns the eventual replacement.
   moto_nav_ui_show_boot_screen();
   pump(260);
   const Frame settled_boot = capture();
   const bool all_black = std::all_of(
       settled_boot.bytes.begin(), settled_boot.bytes.end(),
       [](std::uint8_t byte) { return byte == 0x00; });
-  CHECK(all_black);
+  CHECK(!all_black);
+  pump(400);
+  CHECK(settled_boot.hash == capture().hash);
 
   test_frames_are_deterministic();
   test_clearing_geometry_leaves_no_residue();
@@ -559,8 +561,10 @@ int main(int argc, char **argv) {
   moto_nav_ui_show_boot_screen();
   pump(260);
   const Frame boot_again = capture();
-  CHECK(std::all_of(boot_again.bytes.begin(), boot_again.bytes.end(),
-                    [](std::uint8_t byte) { return byte == 0x00; }));
+  CHECK(!std::all_of(boot_again.bytes.begin(), boot_again.bytes.end(),
+                     [](std::uint8_t byte) { return byte == 0x00; }));
+  pump(400);
+  CHECK(boot_again.hash == capture().hash);
 
   moto_nav_ui_show_power_off_screen();
   pump(260);

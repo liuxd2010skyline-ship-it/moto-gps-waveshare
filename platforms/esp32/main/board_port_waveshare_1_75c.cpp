@@ -846,8 +846,12 @@ extern "C" esp_err_t board_port_init(void) {
   // CO5300 command values. Panel creation itself uses the public esp_lcd APIs
   // so DISPON can be deferred. Explicit PSRAM draw buffers feed direct DMA
   // without allocating a bounce buffer for each transaction.
-  const esp_lv_adapter_config_t adapter_config =
+  esp_lv_adapter_config_t adapter_config =
       ESP_LV_ADAPTER_DEFAULT_CONFIG();
+  // This renderer includes concave footprints, opacity layers and material
+  // callbacks. Reserve headroom above the adapter's generic 8 KiB default.
+  // Keep the stack internal: settings can call NVS while flash cache is off.
+  adapter_config.task_stack_size = 12U * 1024U;
   ESP_RETURN_ON_ERROR(esp_lv_adapter_init(&adapter_config), kTag,
                       "LVGL adapter initialization failed");
 

@@ -472,9 +472,9 @@ void draw_building_fill(lv_layer_t *layer, lv_obj_t *object,
     if(polygon.points[0].x==polygon.points[count-1].x && polygon.points[0].y==polygon.points[count-1].y) --count;
     if(count<3 || count>MOTO_UI_BUILDING_POINT_CAPACITY) return;
     int minimum=350,maximum=0;
-    for(unsigned i=0;i<count;++i) {minimum=std::min(minimum,static_cast<int>(polygon.points[i].y)+origin.y1);maximum=std::max(maximum,static_cast<int>(polygon.points[i].y)+origin.y1);}
+    for(unsigned i=0;i<count;++i) {minimum=std::min<int>(minimum,static_cast<int>(polygon.points[i].y)+origin.y1);maximum=std::max<int>(maximum,static_cast<int>(polygon.points[i].y)+origin.y1);}
     const auto clip=layer->_clip_area;
-    minimum=std::max(minimum,clip.y1);maximum=std::min(maximum,clip.y2);
+    minimum=std::max<int>(minimum,clip.y1);maximum=std::min<int>(maximum,clip.y2);
     float intersections[MOTO_UI_BUILDING_POINT_CAPACITY];
     lv_draw_rect_dsc_t fill;lv_draw_rect_dsc_init(&fill);
     fill.bg_color=lv_obj_get_style_bg_color(object,LV_PART_MAIN);fill.border_opa=LV_OPA_TRANSP;
@@ -489,7 +489,7 @@ void draw_building_fill(lv_layer_t *layer, lv_obj_t *object,
         std::sort(intersections,intersections+crossings);
         const float opacity=255*(1-moto::design::fade_at(static_cast<float>(y)));
         const auto span=[&](int left,int right,float coverage) {
-            left=std::max(left,clip.x1);right=std::min(right,clip.x2);
+            left=std::max<int>(left,clip.x1);right=std::min<int>(right,clip.x2);
             if(left>right || coverage<=0 || opacity<=0) return;
             fill.bg_opa=static_cast<lv_opa_t>(std::lround(opacity*std::clamp(coverage,0.F,1.F)));
             const lv_area_t strip{left,y,right,y};lv_draw_rect(layer,&fill,&strip);
@@ -1893,8 +1893,8 @@ extern "C" void moto_nav_ui_show_boot_screen(void) {
     lv_obj_set_style_bg_opa(ui.screen, LV_OPA_COVER, 0);
 
     // Keep the AMOLED background truly black and animate only the white mark.
-    // A single opacity animation with a delayed reverse is cheaper than
-    // per-letter animation and fits inside the existing 1.25 s boot cadence.
+    // Hold the completed mark until the main scene is committed. A timed
+    // reverse used to erase the only visible frame before startup succeeded.
     lv_obj_t *content = make_layer(ui.screen);
     lv_obj_set_style_opa(content, LV_OPA_TRANSP, 0);
 
@@ -1937,8 +1937,6 @@ extern "C" void moto_nav_ui_show_boot_screen(void) {
     lv_anim_set_values(&fade, LV_OPA_TRANSP, LV_OPA_COVER);
     lv_anim_set_delay(&fade, 30);
     lv_anim_set_duration(&fade, 230);
-    lv_anim_set_reverse_delay(&fade, 650);
-    lv_anim_set_reverse_duration(&fade, 260);
     lv_anim_set_path_cb(&fade, lv_anim_path_ease_in_out);
     lv_anim_start(&fade);
 }
