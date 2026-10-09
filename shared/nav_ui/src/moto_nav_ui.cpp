@@ -18,6 +18,7 @@
 #include <type_traits>
 
 #include "lvgl.h"
+#include "src/misc/cache/instance/lv_image_cache.h"
 
 LV_FONT_DECLARE(moto_font_nav_16);
 

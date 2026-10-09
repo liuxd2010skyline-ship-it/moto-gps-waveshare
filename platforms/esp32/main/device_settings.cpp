@@ -219,7 +219,7 @@ void device_settings_create() {
                             "toggle-background", 103, 286, 260);
   save_status = label("SAVED", 345, &lv_font_montserrat_16);
   button("BACK", "back", 163, 371, 140);
-  label("PWR: SETTINGS / BACK", 415, &lv_font_montserrat_16);
+  label("PWR: SETTINGS / BACK", 429, &lv_font_montserrat_12);
   refresh_brightness();
 }
 
