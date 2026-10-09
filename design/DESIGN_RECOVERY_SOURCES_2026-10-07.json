@@ -1,0 +1,241 @@
+{
+  "retrieved_on": "2026-10-07",
+  "scope": "Read-only recovery of existing planning and design artifacts; no product changes",
+  "repository": "liuxd2010skyline-ship-it/moto-gps-waveshare",
+  "branch": "codex/baidu-iphone-direct-sdk",
+  "verified_commit": "8757841a44ac31ecd6a9065daa22f2a2b99211e7",
+  "original_local_design_documents": [
+    {
+      "name": "BUILDING_COLOR_V1.md",
+      "path": "design/BUILDING_COLOR_V1.md",
+      "bytes": 3781,
+      "sha256": "27bb3f92faf35c0abe8217c12832ceae320fe1481d32e6b8c8208dfa96d8479e"
+    },
+    {
+      "name": "BUILDING_COLOR_V2.md",
+      "path": "design/BUILDING_COLOR_V2.md",
+      "bytes": 1333,
+      "sha256": "1a2c1a5fb5ce5774eb0b8afae3f5c5653e716ebce3da2b55cb15151eceb6088b"
+    },
+    {
+      "name": "BUILDING_MATERIAL_V3.md",
+      "path": "design/BUILDING_MATERIAL_V3.md",
+      "bytes": 2124,
+      "sha256": "b7599e75ed91b90ed22f9214616761bc608630815c867bb2f033909d74fa2f1a"
+    },
+    {
+      "name": "NAV_CODE_READY_SYSTEM_V1.md",
+      "path": "design/NAV_CODE_READY_SYSTEM_V1.md",
+      "bytes": 24283,
+      "sha256": "59c43ceec285967dcbf3466b37a02834b7eabda9de7e6812c583f245bb189fb6"
+    },
+    {
+      "name": "NAV_COMPOSITE_CASES_V1.md",
+      "path": "design/NAV_COMPOSITE_CASES_V1.md",
+      "bytes": 6050,
+      "sha256": "0945cbd580bc0788f79045856d18e9e33788ce64d64bff6e65bc3ae72368b9a7"
+    },
+    {
+      "name": "NAV_DESIGN_MASTER.md",
+      "path": "design/NAV_DESIGN_MASTER.md",
+      "bytes": 6588,
+      "sha256": "0c38347aecf4f5ed3f0fcb95505efa1e1702f834b1b8d51d24a780e6027db57a"
+    },
+    {
+      "name": "NAV_DRAWING_STANDARD_CONFIRMATION.md",
+      "path": "design/NAV_DRAWING_STANDARD_CONFIRMATION.md",
+      "bytes": 6641,
+      "sha256": "2f3d082b73517b235f81338dc55e0341b72bac456f463057d723e7fc07c4a4e0"
+    },
+    {
+      "name": "NAV_ICON_STANDARD_V1.md",
+      "path": "design/NAV_ICON_STANDARD_V1.md",
+      "bytes": 11968,
+      "sha256": "394cd6f79e6876c38bf92c0382859c33c147340a924b6d4632577e90ae53ce01"
+    },
+    {
+      "name": "NAV_IMPLEMENTATION_AUDIT_2026-10-06.md",
+      "path": "design/NAV_IMPLEMENTATION_AUDIT_2026-10-06.md",
+      "bytes": 16856,
+      "sha256": "221b4de6a73a35b2e22c83b9224c5eeabefa8397730956291828e9d3c8b4ad51"
+    },
+    {
+      "name": "NAV_SCENARIO_ATLAS_V1.md",
+      "path": "design/NAV_SCENARIO_ATLAS_V1.md",
+      "bytes": 8010,
+      "sha256": "398f180675853cf91c1cec4987bf5d0f70d2ff1effabf1922b5f1a5e7ccc9e43"
+    },
+    {
+      "name": "NAV_THREE_SCENARIOS_V1.md",
+      "path": "design/NAV_THREE_SCENARIOS_V1.md",
+      "bytes": 1339,
+      "sha256": "8c6c6459b3967cb61bcaeb30904516e301e49bccfe4c974fcf15c5a821789eee"
+    },
+    {
+      "name": "NAV_VISUAL_ATLAS_V2.md",
+      "path": "design/NAV_VISUAL_ATLAS_V2.md",
+      "bytes": 2994,
+      "sha256": "b617f2c2c6667d159e5f2296bc2165d9e98707c36b34bcc8c0264959c8dee6a7"
+    },
+    {
+      "name": "NAV_VISUAL_DIRECTION.md",
+      "path": "design/NAV_VISUAL_DIRECTION.md",
+      "bytes": 4802,
+      "sha256": "7b707534b786594bc23d72b07063aa05576ea9e1d4167c7c4395646a88cfd5c3"
+    },
+    {
+      "name": "NAV_WORST_DATA_V1.md",
+      "path": "design/NAV_WORST_DATA_V1.md",
+      "bytes": 4118,
+      "sha256": "190798064e6a40ab81065a0b4949f4eb1bafd8178453179fbe3b50c39c18ed11"
+    },
+    {
+      "name": "ROAD_AND_VEHICLE_V1.md",
+      "path": "design/ROAD_AND_VEHICLE_V1.md",
+      "bytes": 2578,
+      "sha256": "8c2e4a2bce66bd0917124fd0aad6f71240d5e825fea672a5500d42a04e569c8e"
+    },
+    {
+      "name": "TYPOGRAPHY_PINGFANG_V1.md",
+      "path": "design/TYPOGRAPHY_PINGFANG_V1.md",
+      "bytes": 2363,
+      "sha256": "e7b316c8ab1517cfac312ba9e0abc8783bc77c9abaef61490beffd5e22d6cb8d"
+    },
+    {
+      "name": "V6_EFFECT_IMAGE_PROMPTS.md",
+      "path": "design/V6_EFFECT_IMAGE_PROMPTS.md",
+      "bytes": 2811,
+      "sha256": "7b3b2ea506961eae6dc3db30074cdc1c1806d020ffe99c1bec2fe383d353a4b0"
+    }
+  ],
+  "remote_design_markdown": [
+    "NAV_CODE_READY_SYSTEM_V1.md",
+    "NAV_DESIGN_MASTER.md",
+    "NAV_DRAWING_STANDARD_CONFIRMATION.md",
+    "NAV_IMPLEMENTATION_AUDIT_2026-10-06.md"
+  ],
+  "local_document_link_check": "All linked local paths in the original 17 design Markdown documents were present at retrieval.",
+  "canva_designs": [
+    {
+      "id": "DAHXPYTCreA",
+      "title": null,
+      "urls": {
+        "edit_url": "https://www.canva.com/d/FhRQFJkLZEfqzQ7",
+        "view_url": "https://www.canva.com/d/APNigiyUph8YOef"
+      },
+      "page_count": 1,
+      "identified_content": "Later ambient refinement; wording 300 / m / turn right"
+    },
+    {
+      "id": "DAHXOHZetMs",
+      "title": null,
+      "urls": {
+        "edit_url": "https://www.canva.com/d/WrTq-T6kSfUviKr",
+        "view_url": "https://www.canva.com/d/FKHnyzz_YHhZSCP"
+      },
+      "page_count": 1,
+      "identified_content": "Earlier ambient draft; wording 300 / m / turn right"
+    },
+    {
+      "id": "DAHXN6sKm5o",
+      "title": null,
+      "urls": {
+        "edit_url": "https://www.canva.com/d/-NhfNu9my6zGcqf",
+        "view_url": "https://www.canva.com/d/3GSbxO3YI9KA3sd"
+      },
+      "page_count": 1,
+      "identified_content": "GPS signal lost / waiting for a fresh position"
+    },
+    {
+      "id": "DAHXN0vlN8w",
+      "title": null,
+      "urls": {
+        "edit_url": "https://www.canva.com/d/I9ndICCozky2Ndk",
+        "view_url": "https://www.canva.com/d/OFmnKlGmnTmR13R"
+      },
+      "page_count": 1,
+      "identified_content": "Short route; 38 / m / turn left"
+    },
+    {
+      "id": "DAHXN3ofw_s",
+      "title": null,
+      "urls": {
+        "edit_url": "https://www.canva.com/d/e3mmYUH6sUkRMcR",
+        "view_url": "https://www.canva.com/d/ufQRV6pirHYNtfg"
+      },
+      "page_count": 1,
+      "identified_content": "Current-data route-only draft; 300 / m / turn right"
+    },
+    {
+      "id": "DAHXNxrLO4k",
+      "title": null,
+      "urls": {
+        "edit_url": "https://www.canva.com/d/ujWqrG-VqpXXrFe",
+        "view_url": "https://www.canva.com/d/qdR0sgXLtqYGzr_"
+      },
+      "page_count": 1,
+      "identified_content": "B English; 300 / m / 60 / turn right"
+    },
+    {
+      "id": "DAHXN9Dqhes",
+      "title": null,
+      "urls": {
+        "edit_url": "https://www.canva.com/d/ahziqzWOtL3t7NY",
+        "view_url": "https://www.canva.com/d/vlqlFOyqBjmTcuH"
+      },
+      "page_count": 1,
+      "identified_content": "Historical Chinese draft; 300 / m / 前方右转 / 60"
+    },
+    {
+      "id": "DAHXNxuQ-5c",
+      "title": null,
+      "urls": {
+        "edit_url": "https://www.canva.com/d/1d-uNwTiaMvG42B",
+        "view_url": "https://www.canva.com/d/FtWytR_yDBHteWC"
+      },
+      "page_count": 1,
+      "identified_content": "Historical draft; 300 / m / 60"
+    },
+    {
+      "id": "DAHXNivJtH8",
+      "title": "MOTO GPS V6 – Soft Graphite",
+      "urls": {
+        "edit_url": "https://www.canva.com/d/ZQxsEHxVJk3uAK9",
+        "view_url": "https://www.canva.com/d/VXBizgBk6365AwK"
+      },
+      "page_count": 1,
+      "identified_content": "MOTO GPS V6 – Soft Graphite"
+    },
+    {
+      "id": "DAHXNjia23s",
+      "title": "MOTO GPS V6 – Precision Graphite",
+      "urls": {
+        "edit_url": "https://www.canva.com/d/e8V0B7MJADHu6x-",
+        "view_url": "https://www.canva.com/d/XsGWBeVcoCSk32z"
+      },
+      "page_count": 1,
+      "identified_content": "MOTO GPS V6 – Precision Graphite"
+    },
+    {
+      "id": "DAHXNh4nzCM",
+      "title": "MOTO GPS V6 – Soft Graphite",
+      "urls": {
+        "edit_url": "https://www.canva.com/d/YtDNAOaqGbmOtBw",
+        "view_url": "https://www.canva.com/d/Z6gvsSLfW7E7Or0"
+      },
+      "page_count": 1,
+      "identified_content": "MOTO GPS V6 – Soft Graphite"
+    },
+    {
+      "id": "DAHXNknvxr0",
+      "title": "MOTO GPS V6 – Precision Graphite",
+      "urls": {
+        "edit_url": "https://www.canva.com/d/Ux3gSO40uVJ35FW",
+        "view_url": "https://www.canva.com/d/YEK7BlGddwSZ9y0"
+      },
+      "page_count": 1,
+      "identified_content": "MOTO GPS V6 – Precision Graphite"
+    }
+  ],
+  "note": "The two Canva connections returned the same 12 IDs. Recovered drafts are not all approved designs. Canva conversion is not native-pixel authority."
+}

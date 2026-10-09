@@ -1,21 +1,76 @@
+#include <atomic>
 #include <cstdint>
 
 #include "ble_nav_transport_nimble.h"
 #include "board_port.h"
+#include "device_power_policy.hpp"
+#include "device_settings.h"
 #include "esp_err.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_sleep.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "moto_nav_presenter.hpp"
 #include "moto_nav_ui.h"
-#include "motion_heading_sensor.h"
 #include "phone_nav_bridge.h"
 
 namespace {
 constexpr char kTag[] = "moto_gps";
 constexpr std::uint64_t kPowerHoldMs = 3'000;
+
+enum class StartupStage : std::uint32_t {
+  BoardInitialization, BootFrame, MainLock, MainConstruction, FirstMainFrame,
+  Ready
+};
+std::atomic<StartupStage> startup_stage{StartupStage::BoardInitialization};
+constexpr std::uint32_t kStartupRecoveryMagic = 0x4D475053;
+RTC_NOINIT_ATTR std::uint32_t startup_recovery_marker;
+RTC_NOINIT_ATTR std::uint32_t startup_previous_stage;
+bool startup_is_recovery = false;
+
+const char* startup_stage_name(StartupStage stage) {
+  switch (stage) {
+    case StartupStage::BoardInitialization: return "board initialization";
+    case StartupStage::BootFrame: return "first boot frame";
+    case StartupStage::MainLock: return "main UI display lock";
+    case StartupStage::MainConstruction: return "main UI construction";
+    case StartupStage::FirstMainFrame: return "first main frame flush";
+    case StartupStage::Ready: return "ready";
+  }
+  return "unknown";
+}
+
+void startup_guard_task(void*) {
+  const auto started = esp_timer_get_time();
+  while (esp_timer_get_time() - started < 20'000'000) {
+    if (startup_stage.load(std::memory_order_acquire) == StartupStage::Ready) {
+      startup_recovery_marker = 0;
+      vTaskDelete(nullptr);
+      return;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+  const auto stage = startup_stage.load(std::memory_order_acquire);
+  if (stage == StartupStage::Ready) {
+    startup_recovery_marker = 0;
+    vTaskDelete(nullptr);
+    return;
+  }
+  ESP_LOGE(kTag, "Startup stalled at %s; recovery attempt=%u",
+           startup_stage_name(stage), startup_is_recovery ? 1U : 0U);
+  if (!startup_is_recovery) {
+    // One retry only. Preserve NVS/bonds and the last failing stage across
+    // this software reset; a persistent fault must not become a reboot loop.
+    startup_previous_stage = static_cast<std::uint32_t>(stage);
+    startup_recovery_marker = kStartupRecoveryMagic;
+    esp_restart();
+  }
+  ESP_LOGE(kTag, "Startup recovery failed; collect the serial boot log");
+  vTaskDelete(nullptr);
+}
 
 moto::ble::AckStatus receive_phone_message(
     const moto::ble::ReassembledMessage& message, void* context) {
@@ -24,12 +79,6 @@ moto::ble::AckStatus receive_phone_message(
 
 void update_phone_link(bool active, void* context) {
   static_cast<PhoneNavBridge*>(context)->on_link_state(active);
-}
-
-void update_motion_heading(float heading_rate_dps, std::uint64_t sample_ms,
-                           void* context) {
-  static_cast<PhoneNavBridge*>(context)->on_imu_sample(heading_rate_dps,
-                                                       sample_ms);
 }
 
 void demo_tick_task(void* context) {
@@ -60,6 +109,12 @@ void power_button_task(void*) {
         released_once = true;
         ESP_LOGI(kTag, "PWR ready: button released, hold detection armed");
       }
+      if (pressed_since_ms != 0 &&
+          moto::esp32::is_settings_short_press(now_ms - pressed_since_ms) &&
+          board_port_lock(100)) {
+        device_settings_toggle();
+        board_port_unlock();
+      }
       pressed_since_ms = 0;
       vTaskDelay(pdMS_TO_TICKS(20));
       continue;
@@ -75,6 +130,7 @@ void power_button_task(void*) {
     } else if (now_ms - pressed_since_ms >= kPowerHoldMs) {
       ESP_LOGI(kTag, "PWR held for 3 seconds; requesting shutdown");
       if (board_port_lock(UINT32_MAX)) {
+        device_settings_close();
         moto_nav_ui_show_power_off_screen();
         board_port_unlock();
       }
@@ -110,6 +166,21 @@ extern "C" void app_main(void) {
 
   ESP_LOGI(kTag, "starting %dx%d RGB565 firmware target",
            MOTO_DISPLAY_WIDTH, MOTO_DISPLAY_HEIGHT);
+  startup_is_recovery = startup_recovery_marker == kStartupRecoveryMagic &&
+                        esp_reset_reason() == ESP_RST_SW;
+  if (startup_is_recovery) {
+    ESP_LOGW(kTag, "Recovering startup stalled at %s",
+             startup_stage_name(static_cast<StartupStage>(startup_previous_stage)));
+  } else {
+    startup_recovery_marker = 0;
+  }
+  ESP_LOGI(kTag, "reset reason=%d", static_cast<int>(esp_reset_reason()));
+  // Independent from the LVGL lock/worker, so a missed DMA completion cannot
+  // leave app_main waiting forever after the logo has finished.
+  if (xTaskCreatePinnedToCore(startup_guard_task, "moto_startup", 4096,
+                             nullptr, 2, nullptr, 1) != pdPASS) {
+    ESP_LOGW(kTag, "Startup guard task allocation failed");
+  }
 
   const esp_err_t init_result = board_port_init();
   if (init_result != ESP_OK) {
@@ -126,6 +197,8 @@ extern "C" void app_main(void) {
     return;
   }
 
+  device_settings_load_preferences();
+
   if (lv_display_get_horizontal_resolution(display) != MOTO_DISPLAY_WIDTH ||
       lv_display_get_vertical_resolution(display) != MOTO_DISPLAY_HEIGHT ||
       lv_display_get_color_format(display) != LV_COLOR_FORMAT_RGB565) {
@@ -135,7 +208,8 @@ extern "C" void app_main(void) {
     return;
   }
 
-  if (!board_port_lock(UINT32_MAX)) {
+  startup_stage.store(StartupStage::BootFrame, std::memory_order_release);
+  if (!board_port_lock(3'000)) {
     ESP_LOGE(kTag, "could not acquire LVGL lock");
     vTaskDelete(nullptr);
     return;
@@ -157,12 +231,16 @@ extern "C" void app_main(void) {
   // frame before constructing the full production UI.
   vTaskDelay(pdMS_TO_TICKS(1'250));
 
-  if (!board_port_lock(UINT32_MAX)) {
+  startup_stage.store(StartupStage::MainLock, std::memory_order_release);
+  if (!board_port_lock(3'000)) {
     ESP_LOGE(kTag, "could not reacquire LVGL lock after boot screen");
     vTaskDelete(nullptr);
     return;
   }
 
+  startup_stage.store(StartupStage::MainConstruction, std::memory_order_release);
+  ESP_LOGI(kTag, "constructing main UI; main stack headroom=%u bytes",
+           static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
   moto_nav_ui_create();
   static moto::nav::NavPresenter presenter;
   static PhoneNavBridge phone_bridge(presenter);
@@ -177,7 +255,17 @@ extern "C" void app_main(void) {
   presenter.apply_to_lvgl();
   moto_nav_ui_set_music_page_enabled(0);
   phone_bridge.install_ui_callbacks();
+  device_settings_create();
+  startup_stage.store(StartupStage::FirstMainFrame, std::memory_order_release);
+  // Finish the handoff before background services allocate memory or begin
+  // producing navigation updates. Do not rely on a future timer to redraw.
+  lv_obj_invalidate(lv_screen_active());
+  lv_refr_now(display);
+  ESP_LOGI(kTag, "first main UI frame submitted; main stack headroom=%u bytes",
+           static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+  startup_stage.store(StartupStage::Ready, std::memory_order_release);
   board_port_unlock();
+  device_settings_start_monitor();
 
   if (!phone_bridge.start_renderer()) {
     ESP_LOGE(kTag, "UI renderer startup failed; BLE was not started");
@@ -194,13 +282,8 @@ extern "C" void app_main(void) {
              esp_err_to_name(ble_result));
   }
 
-  static MotionHeadingSensor motion_sensor;
-  const esp_err_t motion_result = motion_sensor.start(update_motion_heading,
-                                                      &phone_bridge);
-  if (motion_result != ESP_OK) {
-    ESP_LOGW(kTag, "QMI8658 heading assist could not start: %s",
-             esp_err_to_name(motion_result));
-  }
+  // Course and route matching are authoritative on the phone. Do not start
+  // the 125 Hz gyro task: device yaw must not rotate the navigation map.
 
   // Demo generation fills the retained snapshot in place, but geometry and
   // LVGL projection still use deeper C++ call frames than a trivial task.
@@ -214,6 +297,6 @@ extern "C" void app_main(void) {
   }
 
   ESP_LOGI(kTag,
-           "iPhone BLE + QMI heading -> NavPresenter -> shared LVGL running");
+           "iPhone travel course -> NavPresenter -> shared LVGL running");
   vTaskDelete(nullptr);
 }

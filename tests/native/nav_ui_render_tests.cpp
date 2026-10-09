@@ -4,6 +4,7 @@
 // transitions and label/geometry residue cleanup.
 
 #include "moto_nav_ui.h"
+#include "moto_nav_visual_geometry.h"
 
 #include <lvgl.h>
 
@@ -11,6 +12,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -116,6 +118,11 @@ moto_ui_state_t base_state() {
   state.gps_accuracy_m = 5;
   state.online = 1;
   state.has_destination = 1;
+  state.has_usable_fix = 1;
+  state.has_next_maneuver = 1;
+  state.geometry_matched = 1;
+  state.total_distance_valid = 1;
+  state.speed_limit_validated = 1; // Explicitly trusted fixture only.
   state.route_identity = 77;
   state.route_generation = 1;
   state.map_scene_revision = 4;
@@ -131,8 +138,8 @@ void fill_route(moto_ui_state_t& state, int count) {
   count = count < 0 ? MOTO_UI_ROUTE_POINT_CAPACITY : count;
   state.route_point_count = static_cast<std::uint8_t>(count);
   for (int i = 0; i < count; ++i) {
-    state.route_points[i] = {static_cast<std::int16_t>(40 + i * 16),
-                             static_cast<std::int16_t>(233 + (i % 2) * 40)};
+    state.route_points[i] = {static_cast<std::int16_t>(207 + (i % 3) * 20),
+                             static_cast<std::int16_t>(300 - i * 16)};
   }
 }
 
@@ -214,6 +221,8 @@ void test_clearing_geometry_leaves_no_residue() {
 
 void test_music_page_state_and_fallback() {
   moto_nav_ui_set_music_page_enabled(1);
+  lv_obj_send_event(lv_screen_active(), LV_EVENT_PRESSED, nullptr);
+  lv_obj_send_event(lv_screen_active(), LV_EVENT_GESTURE, nullptr);
   moto_nav_ui_set_page(MOTO_UI_PAGE_MUSIC);
   CHECK(moto_nav_ui_get_page() == MOTO_UI_PAGE_MUSIC);
 
@@ -328,7 +337,7 @@ void test_motion_frames_interpolate_then_settle_without_residue() {
   moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
   moto_ui_state_t state = base_state();
   state.route_point_count = 3;
-  state.route_points[0] = {233, 254};
+  state.route_points[0] = {207, 300};
   state.route_points[1] = {233, 150};
   state.route_points[2] = {233, 30};
   state.road_point_count = 2;
@@ -353,6 +362,8 @@ void test_motion_frames_interpolate_then_settle_without_residue() {
   for (int index = 0; index < 2; ++index) state.road_points[index].x += 110;
   for (int index = 0; index < 4; ++index) state.building_points[index].x -= 90;
   moto_nav_ui_set_reduce_motion(0);
+  auto appearance = moto_ui_appearance_t{62, 0, 85, 0};
+  moto_nav_ui_set_appearance(&appearance); // Isolate route interpolation from decoration.
   moto_nav_ui_set_motion_state(&state);
   pump(10);  // 50 ms contains two 25 ms interpolation opportunities.
   const auto intermediate = frame_hash();
@@ -369,7 +380,7 @@ void test_motion_frames_interpolate_then_settle_without_residue() {
   const auto direct = capture();
   // Compare the map viewport. The page dots below it expire independently at
   // five seconds, which may fall between the two captured frames.
-  constexpr int map_height = (232 * kWidth + 180) / 360;
+  constexpr int map_height = MOTO_NAV_MAP_BOTTOM_Y;
   constexpr std::size_t map_bytes = kWidth * map_height * (LV_COLOR_DEPTH / 8);
   CHECK(std::equal(direct.bytes.begin(), direct.bytes.begin() + map_bytes,
                    settled_bytes.begin()));
@@ -413,6 +424,121 @@ void test_diagonal_map_pixels_are_independent_of_partial_buffer_height() {
   CHECK(draw_with_buffer(short_buffer) == tall_frame);
 }
 
+void test_native_visual_frame_and_concave_building() {
+  moto_nav_ui_create();
+  moto_nav_ui_set_reduce_motion(1);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  auto state = base_state();
+  state.distance_to_maneuver_m = 300;
+  state.speed_limit_kph = 60;
+  state.traffic = MOTO_TRAFFIC_UNKNOWN;
+  state.route_point_count = 5;
+  state.route_points[0] = {MOTO_NAV_RIDER_X, MOTO_NAV_RIDER_Y};
+  state.route_points[1] = {MOTO_NAV_RIDER_X, 160};
+  state.route_points[2] = {220, 140};
+  state.route_points[3] = {320, 135};
+  state.route_points[4] = {350, 100};
+  state.building_point_count = 6;
+  state.building_points[0] = {30, 50};
+  state.building_points[1] = {140, 50};
+  state.building_points[2] = {140, 140};
+  state.building_points[3] = {90, 140};
+  state.building_points[4] = {90, 90};
+  state.building_points[5] = {30, 90};
+  state.building_footprint_count = 1;
+  state.building_footprints[0] = {0, 6, 0};
+  moto_nav_ui_set_state(&state);
+  pump(260);
+  Frame frame = capture();
+  const auto pixel = [&frame](int x, int y) {
+    const std::size_t offset = (static_cast<std::size_t>(y) * kWidth + x) * 2;
+    return static_cast<std::uint16_t>(frame.bytes[offset]) |
+           static_cast<std::uint16_t>(frame.bytes[offset + 1] << 8);
+  };
+  // The supplied L-shaped footprint is solid while its concave recess is empty.
+  // Its triangle fill must not leave a visible diagonal through the material.
+  CHECK(pixel(50, 70) != pixel(50, 120));
+  CHECK(pixel(120, 120) == pixel(50, 70));
+  CHECK(pixel(110, 70) == pixel(120, 70));
+  CHECK(pixel(105, 80) == pixel(120, 70));
+  // The route may start under the vehicle, but may not leave a bright tail.
+  CHECK(pixel(MOTO_NAV_RIDER_X, 340) == pixel(MOTO_NAV_RIDER_X + 16, 340));
+
+  const char* capture_path = std::getenv("MOTO_NAV_CAPTURE_PPM");
+  if(capture_path != nullptr && capture_path[0] != '\0') {
+    if(const char* scene_path=std::getenv("MOTO_NAV_CAPTURE_SCENE")) {
+      std::ifstream input(scene_path);CHECK(input.good());
+      int count=0;input>>count;CHECK(count>=2 && count<=MOTO_UI_ROUTE_POINT_CAPACITY);
+      state.route_point_count=count;
+      for(int i=0;i<count;++i) input>>state.route_points[i].x>>state.route_points[i].y;
+      input>>count;CHECK(count<=MOTO_UI_ROAD_POLYLINE_CAPACITY);
+      state.road_polyline_count=count;state.road_point_count=0;
+      for(int i=0;i<count;++i) {
+        int kind=0,points=0;input>>kind>>points;
+        auto& span=state.road_polylines[i];span={state.road_point_count,static_cast<std::uint8_t>(points),static_cast<std::uint8_t>(kind)};
+        CHECK(state.road_point_count+points<=MOTO_UI_ROAD_POINT_CAPACITY);
+        for(int j=0;j<points;++j) {auto& point=state.road_points[state.road_point_count++];input>>point.x>>point.y;}
+      }
+      input>>count;CHECK(count<=MOTO_UI_BUILDING_FOOTPRINT_CAPACITY);
+      state.building_footprint_count=count;state.building_point_count=0;
+      for(int i=0;i<count;++i) {
+        int kind=0,points=0;std::uint32_t key=0;input>>kind>>key>>points;
+        state.building_footprints[i]={state.building_point_count,static_cast<std::uint8_t>(points),static_cast<std::uint8_t>(kind),key};
+        CHECK(state.building_point_count+points<=MOTO_UI_BUILDING_POINT_CAPACITY);
+        for(int j=0;j<points;++j) {auto& point=state.building_points[state.building_point_count++];input>>point.x>>point.y;}
+      }
+      CHECK(!input.fail());state.map_scene_revision++;
+      state.speed_limit_validated=0;
+      const std::string kind=std::getenv("MOTO_NAV_CAPTURE_KIND")?std::getenv("MOTO_NAV_CAPTURE_KIND"):"rich";
+      if(kind=="roads" || kind=="route") state.building_point_count=state.building_footprint_count=0;
+      if(kind=="route") state.road_point_count=state.road_polyline_count=0;
+      if(kind=="gps") state.gnss_stale=1;
+      moto_nav_ui_set_state(&state);pump(260);frame=capture();
+    }
+    std::ofstream out(capture_path, std::ios::binary);
+    out << "P6\n" << kWidth << ' ' << kHeight << "\n255\n";
+    for(int y = 0; y < kHeight; ++y) {
+      for(int x = 0; x < kWidth; ++x) {
+        const std::uint16_t color = pixel(x, y);
+        const char rgb[3] = {
+            static_cast<char>(((color >> 11) & 31) * 255 / 31),
+            static_cast<char>(((color >> 5) & 63) * 255 / 63),
+            static_cast<char>((color & 31) * 255 / 31),
+        };
+        out.write(rgb, 3);
+      }
+    }
+    CHECK(out.good());
+  }
+}
+
+void test_static_material_and_fully_off_are_idle_without_losing_guidance() {
+  moto_nav_ui_create();moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  moto_ui_appearance_t appearance{62,75,85,0};moto_nav_ui_set_appearance(&appearance);
+  auto state=base_state();fill_route(state,12);moto_nav_ui_set_state(&state);
+  pump(1'100);const auto first=capture();pump(400);const auto second=capture();
+  CHECK(first.hash==second.hash);
+  moto_ui_appearance_t applied{};moto_nav_ui_get_appearance(&applied);
+  CHECK(applied.reduce_motion==1); // Even an old phone requesting animation is safe.
+  const auto idle_flushes=flush_count;
+  pump(400);CHECK(flush_count==idle_flushes);
+  constexpr std::size_t hud_start=kWidth*350*2;
+  CHECK(std::equal(first.bytes.begin()+hud_start,first.bytes.end(),second.bytes.begin()+hud_start));
+  appearance.intensity=0;moto_nav_ui_set_appearance(&appearance);
+  const auto off=capture();CHECK(off.hash!=first.hash);
+  CHECK(std::equal(first.bytes.begin()+hud_start,first.bytes.end(),off.bytes.begin()+hud_start));
+  const auto off_flushes=flush_count;
+  pump(400);CHECK(flush_count==off_flushes && capture().hash==off.hash);
+  // A duplicate preference/brightness sync cannot redraw the static material.
+  moto_nav_ui_set_appearance(&appearance);pump(40);CHECK(flush_count==off_flushes);
+  appearance.intensity=62;moto_nav_ui_set_appearance(&appearance);
+  CHECK(capture().hash==first.hash);
+  const auto frozen=capture();pump(500);CHECK(capture().hash==frozen.hash);
+  appearance.reduce_motion=0;moto_nav_ui_set_appearance(&appearance);
+  state.gnss_stale=1;moto_nav_ui_set_state(&state);
+  const auto invalid=capture();pump(500);CHECK(capture().hash==invalid.hash);
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
@@ -422,15 +548,17 @@ int main(int argc, char **argv) {
   if(extra_pool_bytes < 0) return EXIT_FAILURE;
   init_display(buffer_rows, extra_pool_bytes);
 
-  // Production cadence: the boot animation completes before the full UI is
-  // created, so settle it before moto_nav_ui_create().
+  // A delayed or failed handoff must keep a visible mark rather than erase
+  // itself. The main screen owns the eventual replacement.
   moto_nav_ui_show_boot_screen();
   pump(260);
   const Frame settled_boot = capture();
   const bool all_black = std::all_of(
       settled_boot.bytes.begin(), settled_boot.bytes.end(),
       [](std::uint8_t byte) { return byte == 0x00; });
-  CHECK(all_black);
+  CHECK(!all_black);
+  pump(400);
+  CHECK(settled_boot.hash == capture().hash);
 
   test_frames_are_deterministic();
   test_clearing_geometry_leaves_no_residue();
@@ -440,17 +568,40 @@ int main(int argc, char **argv) {
   test_capacity_payloads_render_stably();
   test_motion_frames_interpolate_then_settle_without_residue();
   test_diagonal_map_pixels_are_independent_of_partial_buffer_height();
+  test_static_material_and_fully_off_are_idle_without_losing_guidance();
+  test_native_visual_frame_and_concave_building();
 
   // Terminal screens run last: they tear the full UI down.
   moto_nav_ui_show_boot_screen();
   pump(260);
   const Frame boot_again = capture();
-  CHECK(std::all_of(boot_again.bytes.begin(), boot_again.bytes.end(),
-                    [](std::uint8_t byte) { return byte == 0x00; }));
+  CHECK(!std::all_of(boot_again.bytes.begin(), boot_again.bytes.end(),
+                     [](std::uint8_t byte) { return byte == 0x00; }));
+  pump(400);
+  CHECK(boot_again.hash == capture().hash);
 
+  // Shut down an active renderer, not only a boot screen. Pending BLE/IMU
+  // updates and the material timer must never touch deleted widgets.
+  moto_nav_ui_create();
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_ONLINE);
+  auto shutdown_state = base_state();
+  fill_route(shutdown_state, 12);
+  moto_nav_ui_set_state(&shutdown_state);
+  pump(100);
   moto_nav_ui_show_power_off_screen();
   pump(260);
   const Frame power_off = capture();
+  moto_nav_ui_set_state(&shutdown_state);
+  moto_nav_ui_set_motion_state(&shutdown_state);
+  moto_nav_ui_set_phone_connection(MOTO_UI_PHONE_OFFLINE);
+  moto_nav_ui_set_reduce_motion(1);
+  const moto_ui_appearance_t shutdown_appearance{80,90,70,0};
+  moto_nav_ui_set_appearance(&shutdown_appearance);
+  moto_nav_ui_set_demo_active(1);
+  moto_nav_ui_set_page(MOTO_UI_PAGE_SPEED);
+  moto_nav_ui_set_music_page_enabled(1);
+  pump(400);
+  CHECK(power_off.hash == capture().hash);
   moto_nav_ui_show_power_off_screen();
   pump(260);
   CHECK(power_off.hash == capture().hash);

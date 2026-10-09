@@ -88,6 +88,13 @@ if(MOTO_USING_NAV_UI_TEST_STUB)
 endif()
 
 add_executable(ble_protocol_tests ble_protocol_tests.cpp)
+
+add_executable(nav_design_runtime_tests nav_design_runtime_tests.cpp
+  "${CMAKE_CURRENT_LIST_DIR}/../../shared/nav_ui/src/moto_nav_design_runtime.cpp")
+target_include_directories(nav_design_runtime_tests PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/../../shared/nav_ui/include")
+target_compile_features(nav_design_runtime_tests PRIVATE cxx_std_17)
+add_test(NAME nav_design_runtime_tests COMMAND nav_design_runtime_tests)
 target_link_libraries(ble_protocol_tests PRIVATE moto_ble_protocol)
 target_compile_features(ble_protocol_tests PRIVATE cxx_std_17)
 target_compile_definitions(ble_protocol_tests PRIVATE
@@ -105,6 +112,12 @@ target_include_directories(motion_heading_fusion_tests PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main"
 )
 target_compile_features(motion_heading_fusion_tests PRIVATE cxx_std_17)
+
+add_executable(device_power_policy_tests device_power_policy_tests.cpp)
+target_include_directories(device_power_policy_tests PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/../../platforms/esp32/main"
+)
+target_compile_features(device_power_policy_tests PRIVATE cxx_std_17)
 
 find_package(Threads REQUIRED)
 add_executable(phone_nav_bridge_tests
@@ -136,4 +149,5 @@ add_test(NAME nav_presenter_tests COMMAND nav_presenter_tests)
 add_test(NAME ble_protocol_tests COMMAND ble_protocol_tests)
 add_test(NAME connection_epoch_gate_tests COMMAND connection_epoch_gate_tests)
 add_test(NAME motion_heading_fusion_tests COMMAND motion_heading_fusion_tests)
+add_test(NAME device_power_policy_tests COMMAND device_power_policy_tests)
 add_test(NAME phone_nav_bridge_tests COMMAND phone_nav_bridge_tests)

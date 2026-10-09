@@ -1,163 +1,93 @@
-import MapKit
 import MotoNavigationCore
 import SwiftUI
 
-struct RouteOverviewMap: UIViewRepresentable {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
+/// A route schematic drawn from Baidu's GCJ-02 geometry. It does not request
+/// Apple map tiles or pretend to show nearby streets that are unavailable.
+struct RouteOverviewMap: View {
     let candidates: [RoutePreviewCandidate]
     let selectedID: String?
     let origin: WGS84Point?
     let destination: WGS84Point
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Color(uiColor: .secondarySystemGroupedBackground)
+            Canvas { context, size in
+                drawGrid(context: context, size: size)
+                drawRoutes(context: context, size: size)
+            }
+            .padding(8)
+            Label("路线示意 · 百度地图", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
+                .font(.caption.weight(.semibold))
+                .padding(8)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                .padding(12)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 
-    func makeUIView(context: Context) -> MKMapView {
-        let mapView = MKMapView(frame: .zero)
-        mapView.delegate = context.coordinator
-        mapView.registerForTraitChanges([
-            UITraitUserInterfaceStyle.self,
-            UITraitAccessibilityContrast.self
-        ]) { [weak coordinator = context.coordinator] (mapView: MKMapView, _: UITraitCollection) in
-            coordinator?.refreshRouteAppearance(on: mapView)
+    private func drawGrid(context: GraphicsContext, size: CGSize) {
+        var grid = Path()
+        for x in stride(from: CGFloat(0), through: size.width, by: 32) {
+            grid.move(to: CGPoint(x: x, y: 0))
+            grid.addLine(to: CGPoint(x: x, y: size.height))
         }
-        mapView.mapType = .mutedStandard
-        mapView.pointOfInterestFilter = .excludingAll
-        mapView.showsCompass = false
-        mapView.showsScale = false
-        mapView.showsTraffic = true
-        // This map is the route-selection overview, not a free-roaming map.
-        // Let vertical gestures reach the enclosing SwiftUI ScrollView so all
-        // route choices remain reachable instead of accidentally panning the
-        // selected route out of view.
-        mapView.isScrollEnabled = false
-        mapView.isZoomEnabled = false
-        mapView.isRotateEnabled = false
-        mapView.isPitchEnabled = false
-        return mapView
+        for y in stride(from: CGFloat(0), through: size.height, by: 32) {
+            grid.move(to: CGPoint(x: 0, y: y))
+            grid.addLine(to: CGPoint(x: size.width, y: y))
+        }
+        context.stroke(grid, with: .color(Color.primary.opacity(0.055)), lineWidth: 0.5)
     }
 
-    func updateUIView(_ mapView: MKMapView, context: Context) {
-        context.coordinator.selectedID = selectedID
-        let signature = candidates.map(\.id).joined(separator: "|") +
-            "::" + (selectedID ?? "")
-        guard context.coordinator.signature != signature else { return }
-        context.coordinator.signature = signature
+    private func drawRoutes(context: GraphicsContext, size: CGSize) {
+        let allPoints = candidates.flatMap { $0.route.polyline }
+        guard allPoints.count >= 2 else { return }
+        let meanLatitude = allPoints.map(\.latitudeDeg).reduce(0, +) / Double(allPoints.count)
+        let longitudeScale = max(0.1, cos(meanLatitude * .pi / 180))
+        let xs = allPoints.map { $0.longitudeDeg * longitudeScale }
+        let ys = allPoints.map(\.latitudeDeg)
+        guard let minX = xs.min(), let maxX = xs.max(),
+              let minY = ys.min(), let maxY = ys.max()
+        else { return }
+        let spanX = max(maxX - minX, 0.00001)
+        let spanY = max(maxY - minY, 0.00001)
+        let inset: CGFloat = 28
+        let scale = min((size.width - inset * 2) / CGFloat(spanX),
+                        (size.height - inset * 2) / CGFloat(spanY))
+        let usedWidth = CGFloat(spanX) * scale
+        let usedHeight = CGFloat(spanY) * scale
+        let offsetX = (size.width - usedWidth) / 2
+        let offsetY = (size.height - usedHeight) / 2
 
-        mapView.removeOverlays(mapView.overlays)
-        mapView.removeAnnotations(mapView.annotations)
-
-        let ordered = candidates.sorted { lhs, rhs in
-            (lhs.id == selectedID ? 1 : 0) < (rhs.id == selectedID ? 1 : 0)
+        func screenPoint(_ point: GCJ02Point) -> CGPoint {
+            CGPoint(x: offsetX + CGFloat(point.longitudeDeg * longitudeScale - minX) * scale,
+                    y: offsetY + CGFloat(maxY - point.latitudeDeg) * scale)
         }
-        var allCoordinates: [CLLocationCoordinate2D] = []
+
+        let ordered = candidates.sorted {
+            ($0.id == selectedID ? 1 : 0) < ($1.id == selectedID ? 1 : 0)
+        }
         for candidate in ordered {
-            let coordinates = candidate.route.polyline.map { point in
-                let wgs84 = ChinaCoordinateTransform.gcj02ToWGS84(point)
-                return CLLocationCoordinate2D(
-                    latitude: wgs84.latitudeDeg,
-                    longitude: wgs84.longitudeDeg
-                )
+            guard let first = candidate.route.polyline.first else { continue }
+            var path = Path()
+            path.move(to: screenPoint(first))
+            for point in candidate.route.polyline.dropFirst() {
+                path.addLine(to: screenPoint(point))
             }
-            guard coordinates.count >= 2 else { continue }
-            let polyline = MKPolyline(coordinates: coordinates, count: coordinates.count)
-            polyline.title = candidate.id
-            mapView.addOverlay(polyline, level: .aboveRoads)
-            allCoordinates.append(contentsOf: coordinates)
+            let selected = candidate.id == selectedID
+            context.stroke(path, with: .color(selected ? .blue : .gray.opacity(0.55)),
+                           style: StrokeStyle(lineWidth: selected ? 6 : 4,
+                                              lineCap: .round, lineJoin: .round))
         }
-
-        if let origin {
-            let annotation = MKPointAnnotation()
-            annotation.coordinate = CLLocationCoordinate2D(
-                latitude: origin.latitudeDeg,
-                longitude: origin.longitudeDeg
-            )
-            annotation.title = "当前位置"
-            annotation.subtitle = "moto-start"
-            mapView.addAnnotation(annotation)
-            allCoordinates.append(annotation.coordinate)
-        }
-
-        let destinationAnnotation = MKPointAnnotation()
-        destinationAnnotation.coordinate = CLLocationCoordinate2D(
-            latitude: destination.latitudeDeg,
-            longitude: destination.longitudeDeg
-        )
-        destinationAnnotation.title = "目的地"
-        destinationAnnotation.subtitle = "moto-finish"
-        mapView.addAnnotation(destinationAnnotation)
-        allCoordinates.append(destinationAnnotation.coordinate)
-
-        guard !allCoordinates.isEmpty else { return }
-        var visibleRect = MKMapRect.null
-        for coordinate in allCoordinates {
-            let point = MKMapPoint(coordinate)
-            visibleRect = visibleRect.union(
-                MKMapRect(x: point.x, y: point.y, width: 0.1, height: 0.1)
-            )
-        }
-        mapView.setVisibleMapRect(
-            visibleRect,
-            edgePadding: UIEdgeInsets(top: 38, left: 30, bottom: 42, right: 30),
-            animated: context.coordinator.hasPresentedRoute && !reduceMotion
-        )
-        context.coordinator.hasPresentedRoute = true
-    }
-
-    final class Coordinator: NSObject, MKMapViewDelegate {
-        var signature = ""
-        var selectedID: String?
-        var hasPresentedRoute = false
-
-        func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
-            guard let polyline = overlay as? MKPolyline else {
-                return MKOverlayRenderer(overlay: overlay)
-            }
-            let renderer = MKPolylineRenderer(polyline: polyline)
-            configure(renderer, for: polyline, traits: mapView.traitCollection)
-            return renderer
-        }
-
-        func refreshRouteAppearance(on mapView: MKMapView) {
-            // Overlay renderers draw resolved colors. Refresh their strokes when
-            // appearance changes even if the route IDs have stayed the same.
-            for overlay in mapView.overlays {
-                guard let polyline = overlay as? MKPolyline,
-                      let renderer = mapView.renderer(for: overlay) as? MKPolylineRenderer
-                else { continue }
-                configure(renderer, for: polyline, traits: mapView.traitCollection)
-                renderer.setNeedsDisplay()
-            }
-        }
-
-        private func configure(
-            _ renderer: MKPolylineRenderer,
-            for polyline: MKPolyline,
-            traits: UITraitCollection
-        ) {
-            let isSelected = polyline.title == selectedID
-            let color: UIColor = isSelected ? .systemBlue : .systemGray
-            renderer.strokeColor = color.resolvedColor(with: traits)
-            renderer.lineWidth = isSelected ? 7 : 5
-            renderer.lineCap = .round
-            renderer.lineJoin = .round
-        }
-
-        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
-            guard let point = annotation as? MKPointAnnotation else { return nil }
-            let identifier = "route-endpoint"
-            let view = (mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MKMarkerAnnotationView)
-                ?? MKMarkerAnnotationView(annotation: point, reuseIdentifier: identifier)
-            view.annotation = point
-            let isStart = point.subtitle == "moto-start"
-            view.markerTintColor = isStart ? .systemBlue : .systemRed
-            view.glyphImage = UIImage(systemName: isStart ? "location.fill" : "flag.fill")
-            view.glyphTintColor = .white
-            view.subtitleVisibility = .hidden
-            view.displayPriority = .required
-            return view
+        if let selected = candidates.first(where: { $0.id == selectedID }),
+           let start = selected.route.polyline.first,
+           let finish = selected.route.polyline.last {
+            context.fill(Path(ellipseIn: CGRect(x: screenPoint(start).x - 7,
+                                                 y: screenPoint(start).y - 7,
+                                                 width: 14, height: 14)), with: .color(.blue))
+            context.fill(Path(ellipseIn: CGRect(x: screenPoint(finish).x - 7,
+                                                 y: screenPoint(finish).y - 7,
+                                                 width: 14, height: 14)), with: .color(.red))
         }
     }
 }

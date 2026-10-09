@@ -1,4 +1,5 @@
 #include "board_port.h"
+#include "device_power_policy.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -63,6 +64,7 @@ lv_display_t* display = nullptr;
 esp_lcd_panel_handle_t panel = nullptr;
 i2c_master_dev_handle_t pmic = nullptr;
 bool display_revealed = false;
+std::uint8_t display_brightness = 100;
 void* lvgl_extra_pool_storage = nullptr;
 
 struct TeSyncState {
@@ -809,6 +811,21 @@ esp_err_t initialize_power_control() {
 
   ESP_LOGI(kTag,
            "PWR ready: GPIO3 hold 3 s software off, AXP2101 hold 4 s hard off");
+  // Enable battery detection (0x68 bit 0) and the fuel gauge (0x18 bit 3).
+  // Read-modify-write preserves calibration, charger and watchdog settings.
+  constexpr std::uint8_t battery_registers[][2] = {{0x68, 0x01}, {0x18, 0x08}};
+  for (const auto& setting : battery_registers) {
+    std::uint8_t value = 0;
+    esp_err_t result = read_pmic_register(setting[0], &value);
+    if (result == ESP_OK && (value & setting[1]) == 0) {
+      result = write_pmic_register(
+          setting[0], static_cast<std::uint8_t>(value | setting[1]));
+    }
+    if (result != ESP_OK) {
+      ESP_LOGW(kTag, "battery setup reg 0x%02x failed: %s", setting[0],
+               esp_err_to_name(result));
+    }
+  }
   return ESP_OK;
 }
 }  // namespace
@@ -829,8 +846,12 @@ extern "C" esp_err_t board_port_init(void) {
   // CO5300 command values. Panel creation itself uses the public esp_lcd APIs
   // so DISPON can be deferred. Explicit PSRAM draw buffers feed direct DMA
   // without allocating a bounce buffer for each transaction.
-  const esp_lv_adapter_config_t adapter_config =
+  esp_lv_adapter_config_t adapter_config =
       ESP_LV_ADAPTER_DEFAULT_CONFIG();
+  // This renderer includes concave footprints, opacity layers and material
+  // callbacks. Reserve headroom above the adapter's generic 8 KiB default.
+  // Keep the stack internal: settings can call NVS while flash cache is off.
+  adapter_config.task_stack_size = 12U * 1024U;
   ESP_RETURN_ON_ERROR(esp_lv_adapter_init(&adapter_config), kTag,
                       "LVGL adapter initialization failed");
 
@@ -948,7 +969,7 @@ extern "C" esp_err_t board_port_reveal_display(void) {
   // enable cannot overtake the framebuffer transfer.
   ESP_RETURN_ON_ERROR(esp_lcd_panel_disp_on_off(panel, true), kTag,
                       "could not reveal AMOLED");
-  ESP_RETURN_ON_ERROR(esp_lcd_panel_co5300_set_brightness(panel, 100), kTag,
+  ESP_RETURN_ON_ERROR(esp_lcd_panel_co5300_set_brightness(panel, display_brightness), kTag,
                       "could not restore AMOLED brightness");
   display_revealed = true;
   start_te_probe_after_reveal();
@@ -960,6 +981,43 @@ extern "C" bool board_port_lock(uint32_t timeout_ms) {
     return false;
   }
   return bsp_display_lock(timeout_ms) == ESP_OK;
+}
+
+extern "C" esp_err_t board_port_set_brightness(uint8_t percent) {
+  if (panel == nullptr) return ESP_ERR_INVALID_STATE;
+  const auto clamped = moto::esp32::clamp_brightness(percent);
+  if (display_revealed && clamped != display_brightness) {
+    const esp_err_t result = esp_lcd_panel_co5300_set_brightness(panel, clamped);
+    if (result != ESP_OK) return result;
+  }
+  display_brightness = clamped;
+  return ESP_OK;
+}
+
+extern "C" uint8_t board_port_get_brightness(void) {
+  return display_brightness;
+}
+
+extern "C" esp_err_t board_port_read_battery(board_port_battery_t* status) {
+  if (status == nullptr) return ESP_ERR_INVALID_ARG;
+  *status = {};
+  if (pmic == nullptr) return ESP_ERR_INVALID_STATE;
+  constexpr std::uint8_t status_register = 0x00;
+  std::uint8_t registers[2]{};
+  esp_err_t result = i2c_master_transmit_receive(
+      pmic, &status_register, 1, registers, sizeof(registers), 100);
+  if (result != ESP_OK) return result;
+  std::uint8_t percent = 0xFF;
+  // A missing battery is a valid condition, distinct from an I2C failure.
+  if ((registers[0] & 0x08U) != 0) {
+    result = read_pmic_register(0xA4, &percent);
+    if (result != ESP_OK) return result;
+  }
+  const auto reading = moto::esp32::decode_battery(
+      registers[0], registers[1], percent);
+  *status = {true, reading.present, reading.usb_power, reading.charging,
+             reading.percent_valid, reading.percent};
+  return ESP_OK;
 }
 
 extern "C" void board_port_unlock(void) {

@@ -1,0 +1,40 @@
+{
+  "version": "V6/B Soft Graphite",
+  "colors": {
+    "black": { "hex": "#050708", "token": "BLACK" },
+    "route": { "hex": "#F3F4EF", "token": "ROUTE" },
+    "routeUnderlay": { "hex": "#273034", "token": "ROUTE_SHADOW" },
+    "graphite": { "hex": "#11181B", "token": "GRAPHITE" },
+    "road": { "hex": "#42474B", "token": "ROAD" },
+    "roadMajor": { "hex": "#62696D", "token": "ROAD_MAJOR" },
+    "roadMinor": { "hex": "#2B3033", "token": "ROAD_MINOR" },
+    "building": { "hex": "#303335", "token": "BUILDING" },
+    "buildingLandmark": { "hex": "#373B3D", "token": "BUILDING_LANDMARK" },
+    "buildingOutline": { "hex": "#111719", "token": "BUILDING_OUTLINE" },
+    "markerOutline": { "hex": "#050809", "token": "MARKER_OUTLINE" },
+    "textQuiet": { "hex": "#99A5A8", "token": "NAV_TEXT_QUIET" },
+    "unit": { "hex": "#B6BFC0", "token": "NAV_UNIT" },
+    "red": { "hex": "#E83A43", "token": "SPEED_LIMIT_RED" },
+    "limitFace": { "hex": "#F8F9F6", "token": "SPEED_LIMIT_FACE" },
+    "limitText": { "hex": "#141819", "token": "SPEED_LIMIT_TEXT" },
+    "arc": { "hex": "#3A4649", "token": "PROGRESS_BASE" },
+    "arcActive": { "hex": "#DFE4E1", "token": "PROGRESS_ACTIVE" },
+    "statusMark": { "hex": "#3B4549", "token": "STATUS_MARK" },
+    "unavailable": { "hex": "#778488", "token": "MAP_UNAVAILABLE" },
+    "edge": { "hex": "#1A2225", "token": "EDGE" }
+  },
+  "ambientMaterial": {
+    "base": { "hex": "#263338", "token": "AMBIENT_BASE" },
+    "mid": { "hex": "#11191C", "token": "AMBIENT_MID" },
+    "a": { "hex": "#35474C", "token": "AMBIENT_A" },
+    "b": { "hex": "#3C4D52", "token": "AMBIENT_B" },
+    "c": { "hex": "#34464A", "token": "AMBIENT_C" },
+    "aMid": { "hex": "#2E3E42", "token": "AMBIENT_A_MID" },
+    "bMid": { "hex": "#344248", "token": "AMBIENT_B_MID" }
+  },
+  "otherPages": {
+    "ice": { "hex": "#B8EDF5", "token": "ICE" },
+    "amber": { "hex": "#E6C84F", "token": "AMBER" },
+    "legacyGraphite": { "hex": "#303539", "token": "LEGACY_GRAPHITE" }
+  }
+}

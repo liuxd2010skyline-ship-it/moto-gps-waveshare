@@ -75,6 +75,15 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy) NSArray<MotoBLEMapBuildingInput *> *buildings;
 @end
 
+@interface MotoBLEDisplayPreferences : NSObject
+@property(nonatomic) uint32_t revision;
+@property(nonatomic) uint8_t intensity;
+@property(nonatomic) uint8_t speed;
+@property(nonatomic) uint8_t travel;
+@property(nonatomic) uint8_t reduceMotion;
+@property(nonatomic) uint8_t brightness;
+@end
+
 @interface MotoBLEDeviceCommand : NSObject
 @property(nonatomic, readonly) uint16_t sequence;
 @property(nonatomic, readonly) BOOL ackRequested;
@@ -115,6 +124,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) BOOL duplicate;
 @property(nonatomic, readonly, nullable) MotoBLEConnectionStatus *connectionStatus;
 @property(nonatomic, readonly, nullable) MotoBLEHeartbeat *heartbeat;
+@property(nonatomic, readonly, nullable) MotoBLEDisplayPreferences *displayPreferences;
 @property(nonatomic, readonly, nullable) MotoBLEAcknowledgement *acknowledgement;
 @property(nonatomic, readonly, nullable) MotoBLEDeviceCommand *deviceCommand;
 @end
@@ -136,6 +146,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// numbers are deliberately preserved so a new phone session is not mistaken
 /// for a retransmission by the peripheral.
 - (void)resetInboundState;
+
+- (nullable NSArray<NSData *> *)encodeDisplayPreferences:(MotoBLEDisplayPreferences *)preferences
+                                                   error:(NSError **)error;
 
 - (nullable NSArray<NSData *> *)encodePhoneStartingWithSessionID:(uint32_t)sessionID
                                                           error:(NSError **)error;

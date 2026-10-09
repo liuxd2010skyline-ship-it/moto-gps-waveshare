@@ -7,7 +7,6 @@
 
 #include "moto/ble_protocol/ble_protocol.hpp"
 #include "moto_nav_presenter.hpp"
-#include "motion_heading_fusion.hpp"
 
 #ifdef ESP_PLATFORM
 #include "freertos/FreeRTOS.h"
@@ -110,17 +109,18 @@ class PhoneNavBridge {
   moto_ui_phone_connection_t render_phone_connection_ =
       MOTO_UI_PHONE_OFFLINE;
   bool render_demo_active_ = false;
+  moto::ble::DisplayPreferences display_preferences_{};
+  moto::ble::DisplayPreferences render_display_preferences_{};
   enum RenderFlag : std::uint32_t {
     RenderNavigation = 1U << 0U,
     RenderMotion = 1U << 1U,
     RenderMedia = 1U << 2U,
+    RenderPreferences = 1U << 3U,
   };
   std::atomic<std::uint32_t> pending_render_flags_{0};
 #ifdef ESP_PLATFORM
   std::atomic<TaskHandle_t> render_task_handle_{nullptr};
 #endif
-  MotionHeadingFusion heading_fusion_;
-  std::uint64_t last_motion_present_ms_ = 0;
   moto::nav::NavSnapshot snapshot_before_demo_{};
   std::uint64_t demo_started_ms_ = 0;
   bool demo_active_ = false;

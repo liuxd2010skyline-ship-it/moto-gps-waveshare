@@ -1,0 +1,121 @@
+name: Build Waveshare 1.75C firmware
+
+on:
+  push:
+    paths:
+      - .github/workflows/esp32-firmware.yml
+      - platforms/esp32/**
+      - shared/**
+      - config/lv_conf.h
+      - third_party/lvgl
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: esp32-firmware-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-esp32s3:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out reviewed source and LVGL
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Block unreviewed firmware source changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          while read -r path expected; do
+            actual="$(git rev-parse "HEAD:$path")"
+            printf '%s: %s\n' "$path" "$actual"
+            if [[ "$actual" != "$expected" ]]; then
+              echo "Review $path changes before updating the firmware source lock." >&2
+              exit 1
+            fi
+          done <<'TREES'
+          platforms/esp32 bc506f93649c4195b382c8ee0b211ab0539d6b48
+          shared 4802919ba78f1f00b0409a6b08f65fab99c74bc7
+          config 5ec53c0318182300fda9d294f60d983d0419034a
+          assets 55b49e3df4c135c684efb5f33b2017131ed96de4
+          third_party/lvgl 85aa60d18b3d5e5588d7b247abf90198f07c8a63
+          TREES
+          test -f third_party/lvgl/CMakeLists.txt
+          test -z "$(git status --porcelain -- platforms/esp32 shared config assets third_party/lvgl)"
+
+      - name: Build with ESP-IDF 5.5.5
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --env HOME=/tmp \
+            --volume "$GITHUB_WORKSPACE:/project" \
+            --workdir /project \
+            espressif/idf:v5.5.5 \
+            bash -lc 'idf.py --version && idf.py -C platforms/esp32 build'
+          grep -qx 'CONFIG_IDF_TARGET="esp32s3"' platforms/esp32/sdkconfig
+          grep -qx 'CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y' platforms/esp32/sdkconfig
+          grep -qx 'CONFIG_SPIRAM=y' platforms/esp32/sdkconfig
+
+      - name: Package flash images and verify hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+
+          build = Path('platforms/esp32/build')
+          output = Path('firmware-esp32s3-1.75c')
+          args = json.loads((build / 'flasher_args.json').read_text())
+          flash_files = args.get('flash_files')
+          if not isinstance(flash_files, dict) or not flash_files:
+              raise SystemExit('No flash files in flasher_args.json')
+
+          names = list(flash_files.values()) + [
+              'flasher_args.json', 'flash_project_args'
+          ]
+          for name in names:
+              relative = Path(name)
+              if relative.is_absolute() or '..' in relative.parts:
+                  raise SystemExit(f'Unsafe flash path: {name}')
+              source = build / relative
+              if not source.is_file():
+                  raise SystemExit(f'Missing build output: {source}')
+              target = output / relative
+              target.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(source, target)
+
+          shutil.copy2('platforms/esp32/sdkconfig', output / 'sdkconfig')
+
+          (output / 'BUILD_INFO.txt').write_text(
+              'Board: Waveshare ESP32-S3-Touch-AMOLED-1.75C\n'
+              'ESP-IDF: v5.5.5\n'
+              f'Source commit: {os.environ["GITHUB_SHA"]}\n'
+              'Flash size: 32 MB\n'
+          )
+          lines = []
+          for path in sorted(p for p in output.rglob('*') if p.is_file()):
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              lines.append(f'{digest}  {path.relative_to(output).as_posix()}')
+          (output / 'SHA256SUMS.txt').write_text('\n'.join(lines) + '\n')
+          print((output / 'SHA256SUMS.txt').read_text())
+          PY
+
+      - name: Upload firmware for later flashing
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: MotoGPS-ESP32S3-1.75C-${{ github.sha }}
+          path: firmware-esp32s3-1.75c/
+          if-no-files-found: error
+          retention-days: 30

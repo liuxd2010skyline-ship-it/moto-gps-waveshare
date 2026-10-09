@@ -17,7 +17,8 @@ const DEFAULT_OUTPUT = path.join(ROOT_DIR, "shared/offline_map/jinan-v1.sqlite")
 
 const inputPath = path.resolve(process.argv[2] ?? DEFAULT_INPUT);
 const outputPath = path.resolve(process.argv[3] ?? DEFAULT_OUTPUT);
-const sourceMetadataPath = path.join(ROOT_DIR, "tmp/offline_map_source/source-metadata.json");
+const sourceMetadataPath = path.resolve(process.argv[4] ??
+  path.join(ROOT_DIR, "tmp/offline_map_source/source-metadata.json"));
 const sourceMetadata = fs.existsSync(sourceMetadataPath)
   ? JSON.parse(fs.readFileSync(sourceMetadataPath, "utf8"))
   : {
@@ -46,9 +47,13 @@ const PI = Math.PI;
 const EARTH_AXIS_M = 6378245.0;
 const ECCENTRICITY_SQUARED = 0.006693421622965943;
 const LATITUDE_METRES_PER_DEGREE = 111_320;
-const JINAN_REFERENCE_LATITUDE_RAD = (36.67 / 180) * Math.PI;
+const referenceLatitude = Number(sourceMetadata.reference_latitude ?? 36.67);
+if (!Number.isFinite(referenceLatitude) || Math.abs(referenceLatitude) > 85) {
+  throw new Error("Invalid simplification reference latitude");
+}
+const REFERENCE_LATITUDE_RAD = (referenceLatitude / 180) * Math.PI;
 const LONGITUDE_METRES_PER_DEGREE =
-  LATITUDE_METRES_PER_DEGREE * Math.cos(JINAN_REFERENCE_LATITUDE_RAD);
+  LATITUDE_METRES_PER_DEGREE * Math.cos(REFERENCE_LATITUDE_RAD);
 
 function transformLatitude(longitudeOffset, latitudeOffset) {
   let result =
@@ -220,6 +225,9 @@ function mapBuildingClass(properties) {
 }
 
 function shouldKeepRoad(properties) {
+  // Context geometry is not a motor-vehicle routing graph. Campus paths,
+  // cycleways and pedestrian streets remain useful to e-bike navigation.
+  if (sourceMetadata.context_all_roads === true) return true;
   const denied = new Set(["no", "private"]);
   return !denied.has(properties.access) &&
     !denied.has(properties.motor_vehicle) &&
@@ -404,9 +412,9 @@ for await (let line of reader) {
 const metadata = new Map([
   ["schema_version", "1"],
   ["coordinate_system", "GCJ-02"],
-  ["region", "济南市"],
-  ["region_osm_relation", String(sourceMetadata.boundary_relation)],
-  ["source", "OpenStreetMap / Geofabrik Shandong extract"],
+  ["region", sourceMetadata.region ?? "济南市"],
+  ["region_osm_relation", String(sourceMetadata.boundary_relation ?? "")],
+  ["source", sourceMetadata.source_label ?? "OpenStreetMap / Geofabrik Shandong extract"],
   ["source_url", String(sourceMetadata.source_url)],
   ["source_snapshot", String(sourceMetadata.source_timestamp)],
   ["source_sha256", String(sourceMetadata.source_sha256)],
@@ -436,6 +444,9 @@ const coverage = database.prepare(`
     SELECT min_lat_e6,max_lat_e6,min_lon_e6,max_lon_e6 FROM buildings
   )
 `).get();
+for (const [key, value] of Object.entries(coverage)) {
+  insertMetadata.run(`coverage_${key}`, String(value));
+}
 const roadClasses = Object.fromEntries(
   database.prepare("SELECT class,count(*) count FROM roads GROUP BY class ORDER BY class")
     .all().map(({ class: classId, count }) => [classId, Number(count)]),

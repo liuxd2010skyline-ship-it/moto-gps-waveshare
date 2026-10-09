@@ -1,4 +1,5 @@
 #include "moto_nav_presenter.hpp"
+#include "moto_nav_visual_geometry.h"
 
 #include <algorithm>
 #include <cmath>
@@ -13,8 +14,8 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr double kLegacyCanvasSize = 360.0;
 constexpr double kUiScale =
     static_cast<double>(MOTO_UI_CANVAS_WIDTH) / kLegacyCanvasSize;
-constexpr double kVehicleX = MOTO_UI_CANVAS_WIDTH / 2.0;
-constexpr double kVehicleY = 196.0 * kUiScale;
+constexpr double kVehicleX = MOTO_NAV_RIDER_X;
+constexpr double kVehicleY = MOTO_NAV_RIDER_Y;
 // A navigation minimap is a spatial frame of reference, so it must not jump
 // between zoom levels as a maneuver counter crosses an arbitrary threshold.
 // This fixed street-scale view shows roughly 400 m ahead on the 466 px round
@@ -154,6 +155,33 @@ struct MapTransform {
   float cos_heading = 1.0F;
 };
 
+bool map_context_covers_origin(const NavSnapshot& snapshot) {
+  // Revision zero is the explicit legacy demo fixture, which has no MapScene
+  // envelope. Live scene metadata must be valid before either context layer
+  // can appear. No coordinate conversion belongs here: both origins are GCJ-02.
+  if (snapshot.map_scene_revision == 0) return true;
+  const auto valid = [](const Gcj02Point& point) {
+    return std::isfinite(point.latitude_deg) &&
+           std::isfinite(point.longitude_deg) &&
+           std::abs(point.latitude_deg) <= 90.0 &&
+           std::abs(point.longitude_deg) <= 180.0;
+  };
+  if (snapshot.map_scene_radius_m < 100 ||
+      snapshot.map_scene_radius_m > 1'500 ||
+      !valid(snapshot.map_scene_origin) ||
+      !valid(snapshot.route_view_origin)) {
+    return false;
+  }
+  const double north_m =
+      radians(snapshot.route_view_origin.latitude_deg -
+              snapshot.map_scene_origin.latitude_deg) * kEarthRadiusM;
+  const double east_m =
+      radians(snapshot.route_view_origin.longitude_deg -
+              snapshot.map_scene_origin.longitude_deg) * kEarthRadiusM *
+      std::cos(radians(snapshot.route_view_origin.latitude_deg));
+  return std::hypot(north_m, east_m) <= snapshot.map_scene_radius_m;
+}
+
 MapTransform map_transform(const NavSnapshot& snapshot) {
   const double finite_heading =
       std::isfinite(snapshot.heading_deg) ? snapshot.heading_deg : 0.0;
@@ -219,7 +247,8 @@ void project_road_context(const NavSnapshot& snapshot,
                           moto_ui_state_t& output) {
   output.road_point_count = 0;
   output.road_polyline_count = 0;
-  if (!snapshot.has_route_view || !snapshot.has_road_context ||
+  if (!snapshot.has_route_view || !map_context_covers_origin(snapshot) ||
+      !snapshot.has_road_context ||
       snapshot.road_context_point_count < 2 ||
       snapshot.road_context_polyline_count == 0) {
     return;
@@ -261,7 +290,8 @@ void project_building_context(const NavSnapshot& snapshot,
                               moto_ui_state_t& output) {
   output.building_point_count = 0;
   output.building_footprint_count = 0;
-  if (!snapshot.has_route_view || !snapshot.has_building_context ||
+  if (!snapshot.has_route_view || !map_context_covers_origin(snapshot) ||
+      !snapshot.has_building_context ||
       snapshot.building_context_point_count < 3 ||
       snapshot.building_context_footprint_count == 0) {
     return;
@@ -291,6 +321,10 @@ void project_building_context(const NavSnapshot& snapshot,
         static_cast<std::uint8_t>(first),
         static_cast<std::uint8_t>(count),
         static_cast<std::uint8_t>(span.building_class),
+        static_cast<std::uint32_t>(
+            std::llround(snapshot.building_context_points[first].latitude_deg * 1e6)) ^
+        (static_cast<std::uint32_t>(
+            std::llround(snapshot.building_context_points[first].longitude_deg * 1e6)) * 16777619U),
     };
     ++accepted_footprints;
   }
@@ -341,6 +375,15 @@ void NavPresenter::update(const NavSnapshot& snapshot) {
   ui_state_.has_destination = snapshot.has_destination ? 1 : 0;
   ui_state_.route_request_in_flight =
       snapshot.route_request_in_flight ? 1 : 0;
+  ui_state_.has_usable_fix = snapshot.has_usable_fix;
+  ui_state_.gnss_stale = snapshot.gnss_stale;
+  ui_state_.off_route = snapshot.off_route;
+  ui_state_.has_next_maneuver = snapshot.has_next_maneuver;
+  ui_state_.geometry_matched = snapshot.has_route_view;
+  ui_state_.total_distance_valid = snapshot.total_distance_m > 0;
+  ui_state_.maneuver_identity = snapshot.has_next_maneuver ? snapshot.next_maneuver.id : 0;
+  // The existing provider scalar has no segment-validity proof. Never guess.
+  ui_state_.speed_limit_validated = snapshot.speed_limit_validated;
   ui_state_.route_identity = route_identity(snapshot.route_id);
   ui_state_.route_generation = snapshot.route_generation;
   ui_state_.map_scene_revision = snapshot.map_scene_revision;

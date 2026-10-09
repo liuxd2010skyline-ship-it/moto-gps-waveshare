@@ -98,8 +98,8 @@ struct OfflineMapSceneDocument: Codable, Equatable, Sendable {
         }
         guard value.roads.count <= 24,
               value.roads.reduce(0, { $0 + $1.points.count }) <= 192,
-              value.buildings.count <= 16,
-              value.buildings.reduce(0, { $0 + $1.points.count }) <= 128,
+              value.buildings.count <= 48,
+              value.buildings.reduce(0, { $0 + $1.points.count }) <= 240,
               value.roads.allSatisfy({ $0.points.count >= 2 }),
               value.buildings.allSatisfy({
                   $0.points.count >= 3 && $0.points.first != $0.points.last
@@ -131,10 +131,8 @@ protocol OfflineMapSceneQuerying: Sendable {
     ) -> OfflineMapSceneWindow
 }
 
-/// A replaceable spatial-index implementation for the bundled EVT fixture.
-/// It deliberately keeps no SQLite dependency in the app target.  The full
-/// Jinan pack can replace this behind OfflineMapSceneQuerying with SQLite
-/// R-tree without changing BLE or AppModel code.
+/// Source-independent geometry selector shared by offline SQLite and tiles.
+/// It has no platform/SQLite dependency and is exercised by portable Swift CI.
 struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
     private struct Bounds: Sendable {
         let minimumLatitudeE6: Int32
@@ -175,9 +173,18 @@ struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
     private let buildings: [IndexedBuilding]
 
     init(document: OfflineMapSceneDocument) {
-        roads = document.roads.map { IndexedRoad(value: $0, bounds: Bounds(points: $0.points)) }
-        buildings = document.buildings.map {
-            IndexedBuilding(value: $0, bounds: Bounds(points: $0.points))
+        roads = document.roads.compactMap {
+            let points = Self.cleanPoints($0.points, ring: false)
+            guard points.count >= 2 else { return nil }
+            let value = OfflineMapRoad(osmWayID: $0.osmWayID, roadClass: $0.roadClass, points: points)
+            return IndexedRoad(value: value, bounds: Bounds(points: points))
+        }
+        buildings = document.buildings.compactMap {
+            let points = Self.cleanPoints($0.points, ring: true)
+            guard points.count >= 3, Set(points).count == points.count else { return nil }
+            let value = OfflineMapBuilding(osmWayID: $0.osmWayID, name: $0.name,
+                                          buildingClass: $0.buildingClass, points: points)
+            return IndexedBuilding(value: value, bounds: Bounds(points: points))
         }
     }
 
@@ -187,6 +194,11 @@ struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
         revision: UInt32
     ) -> OfflineMapSceneWindow {
         let radius = Double(max(500, min(800, radiusM)))
+        guard (-85_000_000...85_000_000).contains(origin.latitudeE6),
+              (-180_000_000...180_000_000).contains(origin.longitudeE6) else {
+            return OfflineMapSceneWindow(revision: revision, origin: origin,
+                                         radiusM: UInt16(radius), roads: [], buildings: [])
+        }
         let roadCandidates = roads
             .filter { $0.bounds.intersects(origin: origin, radiusM: radius) }
             .flatMap { indexed in
@@ -205,10 +217,12 @@ struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
             }
 
         var selectedRoads: [OfflineMapRoad] = []
+        var roadKeys: Set<[OfflineMapPointE6]> = []
         var roadPointCount = 0
         for candidate in roadCandidates {
             guard selectedRoads.count < 24 else { break }
             guard roadPointCount + candidate.road.points.count <= 192 else { continue }
+            guard roadKeys.insert(Self.canonicalLine(candidate.road.points)).inserted else { continue }
             selectedRoads.append(candidate.road)
             roadPointCount += candidate.road.points.count
         }
@@ -218,8 +232,18 @@ struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
             .filter {
                 Self.polygonIntersects($0.value.points, origin: origin, radiusM: radius)
             }
+            .filter { indexed in
+                // Keep the complete ring; never truncate then close it across
+                // a missing wing. Extremely large/off-range footprints cannot
+                // be encoded by the v1 relative-coordinate contract.
+                indexed.value.points.allSatisfy {
+                    abs(Int64($0.latitudeE6) - Int64(origin.latitudeE6)) <= 100_000 &&
+                    abs(Int64($0.longitudeE6) - Int64(origin.longitudeE6)) <= 100_000
+                }
+            }
             .map { indexed in
-                let distance = Self.minimumDistanceM(indexed.value.points, from: origin)
+                let ring = indexed.value.points
+                let distance = Self.minimumDistanceM(ring + [ring[0]], from: origin)
                 let area = Self.polygonAreaM2(indexed.value.points, around: origin)
                 // Larger footprints remain visible a little farther away, while
                 // nearby buildings still dominate the tiny round viewport.
@@ -233,10 +257,13 @@ struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
             }
 
         var selectedBuildings: [OfflineMapBuilding] = []
+        var buildingKeys: Set<[OfflineMapPointE6]> = []
         var buildingPointCount = 0
         for candidate in buildingCandidates {
-            guard selectedBuildings.count < 16 else { break }
-            guard buildingPointCount + candidate.building.points.count <= 128 else { continue }
+            guard selectedBuildings.count < 48 else { break }
+            guard buildingPointCount + candidate.building.points.count <= 240 else { continue }
+            guard candidate.areaM2 > 0.5,
+                  buildingKeys.insert(Self.canonicalRing(candidate.building.points)).inserted else { continue }
             selectedBuildings.append(candidate.building)
             buildingPointCount += candidate.building.points.count
         }
@@ -258,31 +285,84 @@ struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
         guard road.points.count >= 2 else { return [] }
         var result: [OfflineMapRoad] = []
         var run: [OfflineMapPointE6] = []
+        func finishRun() {
+            if run.count >= 2 {
+                result.append(OfflineMapRoad(osmWayID: road.osmWayID,
+                                            roadClass: road.roadClass, points: run))
+            }
+            run.removeAll(keepingCapacity: true)
+        }
         for index in 1 ..< road.points.count {
             let start = road.points[index - 1]
             let end = road.points[index]
-            if segmentDistanceM(origin, start, end) <= radiusM {
-                if run.isEmpty { run.append(start) }
-                if run.last != end { run.append(end) }
-            } else if run.count >= 2 {
-                result.append(OfflineMapRoad(
-                    osmWayID: road.osmWayID,
-                    roadClass: road.roadClass,
-                    points: run
-                ))
-                run.removeAll(keepingCapacity: true)
-            } else {
-                run.removeAll(keepingCapacity: true)
+            guard let (a, b) = clippedSegment(start, end, origin: origin, radiusM: radiusM) else {
+                finishRun()
+                continue
             }
+            // An outside excursion must not join two boundary intersections
+            // into a new road across empty space.
+            if !run.isEmpty && run.last != a { finishRun() }
+            if run.isEmpty { run.append(a) }
+            if run.last != b { run.append(b) }
+            if b != end { finishRun() }
         }
-        if run.count >= 2 {
-            result.append(OfflineMapRoad(
-                osmWayID: road.osmWayID,
-                roadClass: road.roadClass,
-                points: run
-            ))
-        }
+        finishRun()
         return result
+    }
+
+    private static func clippedSegment(_ start: OfflineMapPointE6, _ end: OfflineMapPointE6,
+                                       origin: OfflineMapPointE6, radiusM: Double)
+        -> (OfflineMapPointE6, OfflineMapPointE6)? {
+        let (ax, ay) = localMetres(start, around: origin)
+        let (bx, by) = localMetres(end, around: origin)
+        let dx = bx - ax, dy = by - ay
+        let a = dx * dx + dy * dy
+        guard a > 0 else { return nil }
+        let b = 2 * (ax * dx + ay * dy)
+        let c = ax * ax + ay * ay - radiusM * radiusM
+        let discriminant = b * b - 4 * a * c
+        guard discriminant > 0 else { return nil }
+        let root = sqrt(discriminant)
+        let enter = max(0, (-b - root) / (2 * a))
+        let leave = min(1, (-b + root) / (2 * a))
+        guard enter < leave else { return nil }
+        func interpolate(_ t: Double) -> OfflineMapPointE6 {
+            OfflineMapPointE6(
+                latitudeE6: Int32((Double(start.latitudeE6) +
+                                  Double(Int64(end.latitudeE6) - Int64(start.latitudeE6)) * t).rounded()),
+                longitudeE6: Int32((Double(start.longitudeE6) +
+                                   Double(Int64(end.longitudeE6) - Int64(start.longitudeE6)) * t).rounded()))
+        }
+        let first = enter == 0 ? start : interpolate(enter)
+        let last = leave == 1 ? end : interpolate(leave)
+        return first == last ? nil : (first, last)
+    }
+
+    private static func cleanPoints(_ points: [OfflineMapPointE6], ring: Bool) -> [OfflineMapPointE6] {
+        guard points.allSatisfy({ (-85_000_000...85_000_000).contains($0.latitudeE6) &&
+            (-180_000_000...180_000_000).contains($0.longitudeE6) }) else { return [] }
+        var result: [OfflineMapPointE6] = []
+        for point in points where result.last != point { result.append(point) }
+        if ring && result.count > 1 && result.first == result.last { result.removeLast() }
+        return result
+    }
+
+    private static func isBefore(_ a: OfflineMapPointE6, _ b: OfflineMapPointE6) -> Bool {
+        a.latitudeE6 == b.latitudeE6 ? a.longitudeE6 < b.longitudeE6 : a.latitudeE6 < b.latitudeE6
+    }
+
+    private static func canonicalLine(_ points: [OfflineMapPointE6]) -> [OfflineMapPointE6] {
+        guard let first = points.first, let last = points.last else { return points }
+        return isBefore(last, first) ? Array(points.reversed()) : points
+    }
+
+    private static func canonicalRing(_ points: [OfflineMapPointE6]) -> [OfflineMapPointE6] {
+        guard let minimum = points.indices.min(by: { isBefore(points[$0], points[$1]) }) else { return points }
+        let rotated = Array(points[minimum...]) + Array(points[..<minimum])
+        if rotated.count > 2 && isBefore(rotated.last!, rotated[1]) {
+            return [rotated[0]] + Array(rotated.dropFirst().reversed())
+        }
+        return rotated
     }
 
     private static func polygonIntersects(
@@ -394,121 +474,63 @@ struct InMemoryOfflineMapSceneIndex: OfflineMapSceneQuerying {
         )
     }
 }
-
-@MainActor
-final class OfflineMapSceneCoordinator {
-    private let index: any OfflineMapSceneQuerying
-    private let radiusM: UInt16
-    private let refreshDistanceM: Double
-    private var lastOrigin: OfflineMapPointE6?
-    private var revision: UInt32 = 0
-
-    init(index: any OfflineMapSceneQuerying, radiusM: UInt16 = 500, refreshDistanceM: Double = 100) {
-        self.index = index
-        self.radiusM = max(500, min(800, radiusM))
-        self.refreshDistanceM = max(25, refreshDistanceM)
-    }
-
-    convenience init(bundle: Bundle = .main) throws {
-        let databaseName = "jinan-v1"
-        var databaseURLs: [URL] = []
-        if let supportRoot = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first {
-            let downloadedURL = supportRoot
-                .appendingPathComponent("OfflineMaps", isDirectory: true)
-                .appendingPathComponent("\(databaseName).sqlite")
-            databaseURLs.append(downloadedURL)
-        }
-        if let bundledDatabase = bundle.url(forResource: databaseName, withExtension: "sqlite") {
-            databaseURLs.append(bundledDatabase)
-        }
-        self.init(index: try Self.loadIndex(databaseURLs: databaseURLs, sampleURL: bundle.url(
-            forResource: "jinan_map_scene_sample",
-            withExtension: "json"
-        )))
-    }
-
-    static func loadIndex(databaseURLs: [URL], sampleURL: URL?) throws -> any OfflineMapSceneQuerying {
-        for url in databaseURLs where FileManager.default.fileExists(atPath: url.path) {
-            do {
-                let index = try SQLiteOfflineMapSceneIndex(url: url)
-                #if DEBUG
-                print("[MotoMap] loaded \(url.lastPathComponent)")
-                #endif
-                return index
-            } catch {
-                // An incomplete downloaded pack must not disable the intact
-                // city map shipped with the app.
-                #if DEBUG
-                print("[MotoMap] invalid map \(url.lastPathComponent): \(error)")
-                #endif
-            }
-        }
-        guard let url = sampleURL else { throw OfflineMapSceneError.resourceMissing }
-        let document = try OfflineMapSceneDocument.decode(Data(contentsOf: url))
-        return InMemoryOfflineMapSceneIndex(document: document)
-    }
-
-    func sceneIfNeeded(latitudeDeg: Double, longitudeDeg: Double) -> OfflineMapSceneWindow? {
-        guard latitudeDeg.isFinite, longitudeDeg.isFinite else { return nil }
-        let origin = OfflineMapPointE6(
-            latitudeE6: Int32(clamping: Int64((latitudeDeg * 1_000_000).rounded())),
-            longitudeE6: Int32(clamping: Int64((longitudeDeg * 1_000_000).rounded()))
-        )
-        if let lastOrigin,
-           Self.distanceM(lastOrigin, origin) < refreshDistanceM {
-            return nil
-        }
-        revision &+= 1
-        if revision == 0 { revision = 1 }
-        lastOrigin = origin
-        return index.query(around: origin, radiusM: radiusM, revision: revision)
-    }
-
-    func reset() {
-        lastOrigin = nil
-    }
-
-    private static func distanceM(_ lhs: OfflineMapPointE6, _ rhs: OfflineMapPointE6) -> Double {
-        let latitudeRadians = Double(rhs.latitudeE6) / 1_000_000 * .pi / 180
-        let northM = Double(lhs.latitudeE6 - rhs.latitudeE6) * 111_195 / 1_000_000
-        let eastM = Double(lhs.longitudeE6 - rhs.longitudeE6) *
-            111_195 * cos(latitudeRadians) / 1_000_000
-        return hypot(eastM, northM)
-    }
-}
-
 extension OfflineMapSceneWindow {
-    func makeBLEInput() -> MotoBLEMapSceneInput {
-        let input = MotoBLEMapSceneInput()
-        input.sceneRevision = revision
-        input.originLatitudeE6 = origin.latitudeE6
-        input.originLongitudeE6 = origin.longitudeE6
-        input.radiusM = radiusM
-        input.roads = roads.map { road in
-            let value = MotoBLEMapRoadInput()
-            value.className = road.roadClass
-            value.points = road.points.map { point in
-                let value = MotoBLEMapPointInput()
-                value.latitudeE6 = point.latitudeE6
-                value.longitudeE6 = point.longitudeE6
-                return value
+    var encodedPayloadByteCount: Int {
+        18 + roads.reduce(0) { $0 + featureBytes($1.points) } +
+            buildings.reduce(0) { $0 + featureBytes($1.points) }
+    }
+
+    /// Select complete features within the negotiated radio/memory budget.
+    /// Alternate roads and footprints so a low-MTU link retains both context
+    /// layers. Never truncate a footprint or reorder its boundary vertices.
+    func forTransmission(denseBuildings: Bool, payloadBudget: Int) -> Self {
+        let maximumBuildings = denseBuildings ? 48 : 16
+        let maximumBuildingPoints = denseBuildings ? 240 : 128
+        var selectedRoads: [OfflineMapRoad] = []
+        var selectedBuildings: [OfflineMapBuilding] = []
+        var bytes = 18, roadPoints = 0, buildingPoints = 0
+        var roadIndex = 0, buildingIndex = 0
+        while roadIndex < roads.count || buildingIndex < buildings.count {
+            if roadIndex < roads.count {
+                let road = roads[roadIndex]
+                roadIndex += 1
+                let cost = featureBytes(road.points)
+                if selectedRoads.count < 24 && roadPoints + road.points.count <= 192 &&
+                    bytes + cost <= payloadBudget {
+                    selectedRoads.append(road)
+                    roadPoints += road.points.count
+                    bytes += cost
+                }
             }
-            return value
-        }
-        input.buildings = buildings.map { building in
-            let value = MotoBLEMapBuildingInput()
-            value.className = building.buildingClass
-            value.points = building.points.map { point in
-                let value = MotoBLEMapPointInput()
-                value.latitudeE6 = point.latitudeE6
-                value.longitudeE6 = point.longitudeE6
-                return value
+            for _ in 0..<2 where buildingIndex < buildings.count {
+                let building = buildings[buildingIndex]
+                buildingIndex += 1
+                let cost = featureBytes(building.points)
+                if selectedBuildings.count < maximumBuildings &&
+                    buildingPoints + building.points.count <= maximumBuildingPoints &&
+                    bytes + cost <= payloadBudget {
+                    selectedBuildings.append(building)
+                    buildingPoints += building.points.count
+                    bytes += cost
+                }
             }
-            return value
         }
-        return input
+        return Self(revision: revision, origin: origin, radiusM: radiusM,
+                    roads: selectedRoads, buildings: selectedBuildings)
+    }
+
+    private func featureBytes(_ points: [OfflineMapPointE6]) -> Int {
+        2 + points.reduce(0) {
+            $0 + Self.signedVarintBytes(Int64($1.latitudeE6) - Int64(origin.latitudeE6)) +
+                Self.signedVarintBytes(Int64($1.longitudeE6) - Int64(origin.longitudeE6))
+        }
+    }
+
+    private static func signedVarintBytes(_ value: Int64) -> Int {
+        var encoded = UInt64(bitPattern: (value << 1) ^ (value >> 63))
+        var bytes = 1
+        while encoded >= 128 { encoded >>= 7; bytes += 1 }
+        return bytes
     }
 }
+

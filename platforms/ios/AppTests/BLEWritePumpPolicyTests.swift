@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import MotoNavigationCore
 @testable import MOTO_GPS
 
 final class BLEWritePumpPolicyTests: XCTestCase {

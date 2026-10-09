@@ -3,6 +3,10 @@ set(MOTO_SHARED_UI_SOURCE
     "${MOTO_REPOSITORY_ROOT}/shared/nav_ui/src/moto_nav_ui.cpp")
 set(MOTO_SHARED_UI_FONT
     "${MOTO_REPOSITORY_ROOT}/shared/nav_ui/assets/moto_font_nav_16.c")
+set(MOTO_SHARED_UI_DISTANCE_FONT
+    "${MOTO_REPOSITORY_ROOT}/shared/nav_ui/assets/moto_font_distance_56.c")
+set(MOTO_SHARED_UI_ICONS
+    "${MOTO_REPOSITORY_ROOT}/shared/nav_ui/assets/moto_nav_icons.c")
 set(MOTO_SHARED_UI_INCLUDE
     "${MOTO_REPOSITORY_ROOT}/shared/nav_ui/include")
 set(MOTO_SHARED_NAV_PRESENTER_SOURCE
@@ -17,12 +21,16 @@ idf_component_register(
         "app_main.cpp"
         "ble_nav_transport_nimble.cpp"
         "board_port_waveshare_1_75c.cpp"
+        "device_settings.cpp"
         "motion_heading_sensor.cpp"
         "phone_nav_bridge.cpp"
         "${MOTO_SHARED_BLE_PROTOCOL_SOURCE}"
         "${MOTO_SHARED_NAV_PRESENTER_SOURCE}"
         "${MOTO_SHARED_UI_FONT}"
+        "${MOTO_SHARED_UI_DISTANCE_FONT}"
+        "${MOTO_SHARED_UI_ICONS}"
         "${MOTO_SHARED_UI_SOURCE}"
+        "${MOTO_REPOSITORY_ROOT}/shared/nav_ui/src/moto_nav_design_runtime.cpp"
     INCLUDE_DIRS
         "."
         "${MOTO_REPOSITORY_ROOT}/shared"

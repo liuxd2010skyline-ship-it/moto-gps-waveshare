@@ -1,0 +1,40 @@
+name: Build Beijing offline map
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - scripts/offline_map/**
+      - .github/workflows/offline-map.yml
+
+permissions:
+  contents: read
+
+jobs:
+  beijing-map:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Install offline extraction tool
+        run: python3 -m pip install osmium==4.2.0
+      - name: Build and check real Beijing roads and footprints
+        run: python3 scripts/offline_map/prepare_beijing_pack.py
+      - name: Verify the production SQLite selector on real Haidian data
+        env:
+          MOTO_REQUIRE_BEIJING_MAP: '1'
+        run: swift test --package-path platforms/ios
+      - name: Upload map and provenance
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Beijing-offline-map
+          path: |
+            build/offline-maps/beijing-v1.sqlite
+            build/offline-maps/beijing-v1.manifest.json
+          if-no-files-found: error
+          retention-days: 30

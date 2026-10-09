@@ -1,7 +1,7 @@
 name: MotoGPS
 
 options:
-  bundleIdPrefix: org.example
+  bundleIdPrefix: com.liuxd2010skyline
   deploymentTarget:
     iOS: "17.0"
   xcodeVersion: "16.0"
@@ -21,6 +21,7 @@ targets:
           - Info.plist
           - MotoGPS.entitlements
       - path: ../../shared/ble_protocol/src/ble_protocol.cpp
+      - path: ../../shared/nav_ui/src/moto_nav_design_runtime.cpp
       - path: ../../shared/coordinates/coordinates.cpp
       - path: ../../shared/nav_core/nav_core.cpp
       - path: ../../shared/nav_app/nav_app.cpp
@@ -29,6 +30,10 @@ targets:
       - path: ../../shared/demo_fixture/jinan_map_scene_sample.json
         buildPhase: resources
       - path: ../../shared/offline_map/jinan-v1.sqlite
+        buildPhase: resources
+      - path: ../../build/offline-maps/beijing-v1.sqlite
+        buildPhase: resources
+      - path: ../../build/offline-maps/beijing-v1.manifest.json
         buildPhase: resources
       - path: ../../NOTICE
         buildPhase: resources
@@ -58,7 +63,6 @@ targets:
         UIBackgroundModes:
           - location
           - bluetooth-central
-        MOTOGPSGatewayBaseURL: https://example.invalid/moto-gps/api/
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UIApplicationSceneManifest:
@@ -67,10 +71,10 @@ targets:
       path: App/MotoGPS.entitlements
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.example.motogps
+        PRODUCT_BUNDLE_IDENTIFIER: com.liuxd2010skyline.motogps
         PRODUCT_NAME: MOTO GPS
-        MARKETING_VERSION: 0.3.0
-        CURRENT_PROJECT_VERSION: 5
+        MARKETING_VERSION: 0.4.0
+        CURRENT_PROJECT_VERSION: 8
         SWIFT_VERSION: 5.0
         SWIFT_STRICT_CONCURRENCY: targeted
         SWIFT_OBJC_BRIDGING_HEADER: App/MotoGPS-Bridging-Header.h
@@ -79,6 +83,7 @@ targets:
           - $(SRCROOT)/../../shared/coordinates/include
           - $(SRCROOT)/../../shared
           - $(SRCROOT)/../../shared/nav_app/include
+          - $(SRCROOT)/../../shared/nav_ui/include
         CLANG_CXX_LANGUAGE_STANDARD: c++17
         CLANG_CXX_LIBRARY: libc++
         GENERATE_INFOPLIST_FILE: NO
@@ -97,7 +102,7 @@ targets:
       - target: MotoGPS
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.example.motogps.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: com.liuxd2010skyline.motogps.uitests
         SWIFT_VERSION: 5.0
         TEST_TARGET_NAME: MotoGPS
         GENERATE_INFOPLIST_FILE: YES
@@ -113,7 +118,7 @@ targets:
       - target: MotoGPS
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.example.motogps.unittests
+        PRODUCT_BUNDLE_IDENTIFIER: com.liuxd2010skyline.motogps.unittests
         SWIFT_VERSION: 5.0
         GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/MOTO GPS.app/MOTO GPS

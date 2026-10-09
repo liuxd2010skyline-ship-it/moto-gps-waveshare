@@ -372,6 +372,7 @@ final class SurroundingMapStore: ObservableObject {
 
     private let cache: MapTileCache
     private let fallback: (any OfflineMapSceneQuerying)?
+    private let offlineOnly: Bool
     private var sceneTask: Task<Void, Never>?
     private var downloadTask: Task<Void, Never>?
     private var generation: UInt64 = 0
@@ -382,15 +383,18 @@ final class SurroundingMapStore: ObservableObject {
     private var activeDownloadID: String?
 
     init(baseURL: URL, bundle: Bundle = .main, storageURL: URL? = nil,
-         loader: MapTileCache.Loader? = nil) {
+         loader: MapTileCache.Loader? = nil, offlineOnly: Bool = false) {
+        self.offlineOnly = offlineOnly
+        if offlineOnly { statusText = "手机本地离线底图" }
         let storage = storageURL ?? FileManager.default.urls(for: .applicationSupportDirectory,
                                                             in: .userDomainMask)[0]
             .appendingPathComponent("SurroundingMaps", isDirectory: true)
         cache = MapTileCache(root: storage, loader: loader ?? Self.httpLoader(baseURL: baseURL))
-        let bundled = bundle.url(forResource: "jinan-v1", withExtension: "sqlite")
-        fallback = try? OfflineMapSceneCoordinator.loadIndex(
-            databaseURLs: bundled.map { [$0] } ?? [],
-            sampleURL: bundle.url(forResource: "jinan_map_scene_sample", withExtension: "json"))
+        let indexes = ["beijing-v1", "jinan-v1"].compactMap { name -> SQLiteOfflineMapSceneIndex? in
+            guard let url = bundle.url(forResource: name, withExtension: "sqlite") else { return nil }
+            return try? SQLiteOfflineMapSceneIndex(url: url)
+        }
+        fallback = indexes.isEmpty ? nil : OfflineMapRegionIndex(indexes: indexes)
         Task { [weak self] in await self?.reloadPacks() }
     }
 
@@ -407,6 +411,29 @@ final class SurroundingMapStore: ObservableObject {
                                      longitudeE6: Int32((longitudeDeg * 1_000_000).rounded()))
         if let lastOrigin, Self.distance(lastOrigin, origin) < 100,
            retryAfter.map({ Date() < $0 }) ?? true { return }
+        if offlineOnly {
+            lastOrigin = origin
+            generation &+= 1
+            let current = generation
+            revision &+= 1
+            if revision == 0 { revision = 1 }
+            let currentRevision = revision
+            let index = fallback
+            sceneTask?.cancel()
+            sceneTask = Task { [weak self] in
+                let window = await Task.detached(priority: .utility) {
+                    index?.query(around: origin, radiusM: 500, revision: currentRevision) ??
+                    OfflineMapSceneWindow(revision: currentRevision, origin: origin, radiusM: 500,
+                                          roads: [], buildings: [])
+                }.value
+                guard !Task.isCancelled, let self, self.generation == current else { return }
+                self.onScene?(window)
+                self.statusText = window.roads.isEmpty && window.buildings.isEmpty
+                    ? "此处没有可用的离线地物 · 导航路线继续显示"
+                    : "离线底图 · \(window.roads.count) 条道路 · \(window.buildings.count) 栋建筑"
+            }
+            return
+        }
         let tiles: [MapTileID]
         do {
             tiles = Array(Set(try MapTilePlanner.aroundGCJ02(latitudeDeg: latitudeDeg,
@@ -473,12 +500,23 @@ final class SurroundingMapStore: ObservableObject {
     }
 
     func reset() {
+        let previousOrigin = lastOrigin
         generation &+= 1
         sceneTask?.cancel()
         sceneTask = nil
         lastOrigin = nil
         retryAfter = nil
-        statusText = "在线地图优先，离线地图备用"
+        statusText = offlineOnly ? "手机本地离线底图" : "在线地图优先，离线地图备用"
+        // Reset is also used when leaving the bundled Jinan demo for a real
+        // route.  The ESP32 retains the last complete MapScene until it gets
+        // a newer revision, so send an empty replacement instead of leaving
+        // demo roads under a live route on an uninterrupted BLE connection.
+        if let previousOrigin {
+            revision &+= 1
+            if revision == 0 { revision = 1 }
+            onScene?(OfflineMapSceneWindow(revision: revision, origin: previousOrigin,
+                                           radiusM: 500, roads: [], buildings: []))
+        }
     }
 
     func download(name: String, detail: String, tiles: [MapTileID]) {

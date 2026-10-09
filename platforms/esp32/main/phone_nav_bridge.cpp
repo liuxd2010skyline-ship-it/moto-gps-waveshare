@@ -1,4 +1,7 @@
 #include "phone_nav_bridge.h"
+#ifdef ESP_PLATFORM
+#include "device_settings.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -161,6 +164,8 @@ void clear_map_context(moto::nav::NavSnapshot& output) {
   clear_road_context(output);
   clear_building_context(output);
   output.map_scene_revision = 0;
+  output.map_scene_origin = {};
+  output.map_scene_radius_m = 0;
 }
 
 moto::nav::RoadContextClass map_road_class(
@@ -341,8 +346,6 @@ void PhoneNavBridge::on_link_state(bool active) {
       geometry_ = {};
       phone_snapshot.has_route_view = false;
       clear_map_context(phone_snapshot);
-      heading_fusion_.reset();
-      last_motion_present_ms_ = 0;
       music_page_enabled_ = false;
       media_state_ = {};
       media_state_.source_name = "iPhone";
@@ -354,29 +357,10 @@ void PhoneNavBridge::on_link_state(bool active) {
   request_render(flags);
 }
 
-void PhoneNavBridge::on_imu_sample(float heading_rate_dps,
-                                   std::uint64_t sample_ms) {
-  bool should_present = false;
-  {
-    const std::lock_guard<std::mutex> lock(state_mutex_);
-    if (demo_active_ ||
-        !heading_fusion_.integrate(heading_rate_dps, sample_ms)) {
-      return;
-    }
-    snapshot_.heading_deg = heading_fusion_.heading_deg();
-    // The QMI8658 runs at 125 Hz. Reproject at the display's unified 40 Hz
-    // cadence; requests still coalesce if one physical refresh runs long.
-    if (sample_ms - last_motion_present_ms_ >= 25 &&
-        (snapshot_.has_route_view ||
-         snapshot_.display_page == moto::nav::DisplayPage::Compass)) {
-      // Preserve the 25 ms phase. Setting this to sample_ms quantizes every
-      // interval to four 8 ms samples (32 ms), silently reducing 40 to 31 Hz.
-      last_motion_present_ms_ +=
-          ((sample_ms - last_motion_present_ms_) / 25U) * 25U;
-      should_present = true;
-    }
-  }
-  if (should_present) present_motion();
+void PhoneNavBridge::on_imu_sample(float, std::uint64_t) {
+  // Navigation is course/route driven. A handlebar-mounted gyro measures the
+  // DISPLAY's motion, not the vehicle's travel direction. Keep the adapter
+  // entry point harmless for old callers, without scheduling any redraw.
 }
 
 void PhoneNavBridge::fill_demo_snapshot(moto::nav::NavSnapshot& output,
@@ -561,6 +545,13 @@ moto::ble::AckStatus PhoneNavBridge::on_message(
           consume_media(value);
         } else if constexpr (std::is_same_v<T, moto::ble::MapScene>) {
           return consume_map_scene(value);
+        } else if constexpr (std::is_same_v<T, moto::ble::DisplayPreferences>) {
+          {
+            const std::lock_guard<std::mutex> lock(state_mutex_);
+            if(!link_active_ || ui_phone_connection_!=MOTO_UI_PHONE_ONLINE) return moto::ble::AckStatus::InvalidState;
+            display_preferences_=value;
+          }
+          request_render(RenderPreferences);
         } else if constexpr (std::is_same_v<T, moto::ble::Ack>) {
           ESP_LOGD(kTag, "phone ack sequence=%u command=%u status=%u",
                    value.acknowledged_sequence, value.command_id,
@@ -590,20 +581,11 @@ void PhoneNavBridge::consume_navigation(
     // protocol session is usable even if a reordered Ready frame was not
     // observed by this bridge callback.
     ui_phone_connection_ = MOTO_UI_PHONE_ONLINE;
-    // A phone course is absolute while moving; use it as the low-frequency
-    // anchor and preserve the local gyroscope's much faster response between
-    // Core Location updates. At walking/standstill speeds Core Location course
-    // is commonly stale, so MotionHeadingFusion deliberately does not pull the
-    // display back toward it.
     const float phone_speed_mps =
         static_cast<float>(input.speed_deci_kph) / 36.0F;
     const float phone_heading_deg =
         static_cast<float>(input.heading_cdeg) / 100.0F;
-    const bool has_usable_fix = has_flag(
-        input.flags, moto::ble::NavigationHasFix);
-    heading_fusion_.anchor(phone_heading_deg, phone_speed_mps,
-                           has_usable_fix && !has_flag(
-                               input.flags, moto::ble::NavigationGnssStale));
+    const bool has_usable_fix = has_flag(input.flags, moto::ble::NavigationHasFix);
 
     phone_snapshot.state = map_state(input.state);
     phone_snapshot.network = map_network(input.network);
@@ -622,14 +604,16 @@ void PhoneNavBridge::consume_navigation(
     phone_snapshot.has_next_maneuver = has_flag(
         input.flags, moto::ble::NavigationHasNextManeuver);
     phone_snapshot.speed_mps = phone_speed_mps;
-    phone_snapshot.heading_deg = heading_fusion_.initialized()
-                                     ? heading_fusion_.heading_deg()
-                                     : phone_heading_deg;
+    // NavCore already resolves travel course against the current route.
+    // Preserve its result exactly; never blend in physical display yaw.
+    phone_snapshot.heading_deg = phone_snapshot.gnss_stale
+                                     ? phone_snapshot.heading_deg : phone_heading_deg;
     phone_snapshot.horizontal_accuracy_m =
         static_cast<float>(input.accuracy_dm) / 10.0F;
     phone_snapshot.cross_track_distance_m =
         static_cast<float>(input.cross_track_dm) / 10.0F;
     phone_snapshot.speed_limit_kph = input.speed_limit_kph;
+    phone_snapshot.speed_limit_validated = has_flag(input.flags,moto::ble::NavigationSpeedLimitValidated);
     phone_snapshot.route_progress_m = input.route_progress_m;
     phone_snapshot.total_distance_m = input.total_distance_m;
     phone_snapshot.remaining_distance_m = input.remaining_distance_m;
@@ -810,9 +794,14 @@ moto::ble::AckStatus PhoneNavBridge::consume_map_scene(
     // A MapScene is a complete window replacement. Retransmitted or delayed
     // older windows must not roll the display back after the rider has crossed
     // into a newer offline-map tile.
-    if (target.map_scene_revision != 0 &&
-        input.scene_revision <= target.map_scene_revision) {
-      return moto::ble::AckStatus::Duplicate;
+    if (target.map_scene_revision != 0) {
+      // UInt32 revisions wrap on the phone. Serial-number arithmetic accepts
+      // the next wrapped revision but still rejects duplicates and old frames.
+      const std::uint32_t advance =
+          input.scene_revision - target.map_scene_revision;
+      if (advance == 0 || advance >= 0x80000000U) {
+        return moto::ble::AckStatus::Duplicate;
+      }
     }
 
     // The decoder has already validated every class, point count and GCJ-02
@@ -863,6 +852,11 @@ moto::ble::AckStatus PhoneNavBridge::consume_map_scene(
     target.building_context_footprint_count =
         static_cast<std::uint8_t>(next_building);
     target.has_building_context = next_building > 0;
+    target.map_scene_origin = {
+        static_cast<double>(input.view_origin.latitude_e6) / 1'000'000.0,
+        static_cast<double>(input.view_origin.longitude_e6) / 1'000'000.0,
+    };
+    target.map_scene_radius_m = input.radius_m;
     target.map_scene_revision = input.scene_revision;
   }
   ESP_LOGI(kTag,
@@ -930,6 +924,7 @@ void PhoneNavBridge::render_pending() {
   const bool navigation = (requested & RenderNavigation) != 0U;
   const bool motion = !navigation && (requested & RenderMotion) != 0U;
   const bool media = (requested & RenderMedia) != 0U;
+  const bool preferences=(requested & RenderPreferences)!=0U;
   {
     const std::lock_guard<std::mutex> lock(state_mutex_);
     if (navigation || motion) {
@@ -940,6 +935,7 @@ void PhoneNavBridge::render_pending() {
       render_demo_active_ = demo_active_;
       render_music_page_enabled_ = music_page_enabled_;
     }
+    if(preferences) render_display_preferences_=display_preferences_;
     if (media) {
       render_media_state_ = media_state_;
     }
@@ -963,6 +959,15 @@ void PhoneNavBridge::render_pending() {
 #endif
     request_render(requested);
     return;
+  }
+  if(preferences) {
+    auto& p=render_display_preferences_;
+    p.reduce_motion=1; // Echo the static policy actually applied by this release.
+    const moto_ui_appearance_t a{p.intensity,p.speed,p.travel,p.reduce_motion};
+    moto_nav_ui_set_appearance(&a);
+#ifdef ESP_PLATFORM
+    device_settings_apply_phone_preferences(&a,p.brightness);
+#endif
   }
   if (navigation) {
     moto_nav_ui_set_phone_connection(render_phone_connection_);
@@ -989,6 +994,11 @@ void PhoneNavBridge::render_pending() {
     moto_nav_ui_set_music_state(&state);
   }
   board_port_unlock();
+  if(preferences) {
+    SendCallback callback=nullptr;void* context=nullptr;
+    {const std::lock_guard<std::mutex> lock(state_mutex_);if(link_active_) {callback=sender_;context=sender_context_;}}
+    if(callback) callback(moto::ble::Message(render_display_preferences_),moto::ble::Urgent,context);
+  }
 }
 
 #ifdef ESP_PLATFORM

@@ -2,6 +2,8 @@
 
 # 微雪版 DIY 教程：购买、烧录、iPhone 安装与首次使用
 
+> **当前 iPhone + 百度路线版本请先看[Windows 到货操作卡](WAVESHARE_1_75C_ARRIVAL_CHECKLIST.md)。** 下文保留原作者 Mac/Xcode + 高德网关流程作历史参考；它不是当前项目的安装路径。圆屏固件和 UI 仍沿用本仓库的微雪 1.75C 实现。
+
 适用型号：**Waveshare ESP32-S3-Touch-AMOLED-1.75C**。本文按 Mac + iPhone 的完整流程编写，
 面向第一次接触 ESP32 的读者。安装完成后的日常操作见[功能与使用说明书](USER_MANUAL.md)。
 

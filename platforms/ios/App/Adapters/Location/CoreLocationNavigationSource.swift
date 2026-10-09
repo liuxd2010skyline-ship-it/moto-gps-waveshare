@@ -3,7 +3,7 @@ import MotoNavigationCore
 
 @MainActor
 final class CoreLocationNavigationSource: NSObject, NavigationLocationSource {
-    private static let maximumFixAgeS: TimeInterval = 15
+    private static let maximumFixAgeS: TimeInterval = 5
     private let manager = CLLocationManager()
     private var onFix: (@MainActor (NavigationFix) -> Void)?
     private var onFailure: (@MainActor (String) -> Void)?
@@ -80,7 +80,8 @@ extension CoreLocationNavigationSource: @preconcurrency CLLocationManagerDelegat
                 $0.horizontalAccuracy >= 0 &&
                     $0.coordinate.latitude.isFinite &&
                     $0.coordinate.longitude.isFinite &&
-                    abs($0.timestamp.timeIntervalSince(now)) <= Self.maximumFixAgeS
+                    $0.timestamp.timeIntervalSince(now) <= 1 &&
+                    now.timeIntervalSince($0.timestamp) <= Self.maximumFixAgeS
             })
             .max(by: { $0.timestamp < $1.timestamp })
         else { return }
@@ -94,7 +95,10 @@ extension CoreLocationNavigationSource: @preconcurrency CLLocationManagerDelegat
                 altitudeM: location.verticalAccuracy >= 0 ? location.altitude : nil,
                 horizontalAccuracyM: location.horizontalAccuracy,
                 speedMps: location.speed >= 0 ? location.speed : nil,
-                courseDeg: location.course >= 0 ? location.course : nil,
+                // Course is travel direction, not the phone's physical orientation.
+                courseDeg: location.course >= 0 && location.course < 360 &&
+                    location.courseAccuracy >= 0 && location.courseAccuracy <= 30
+                    ? location.course : nil,
                 timestamp: location.timestamp
             )
         )

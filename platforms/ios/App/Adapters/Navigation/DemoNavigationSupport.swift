@@ -197,14 +197,14 @@ final class DemoNavigationLocationSource: NavigationLocationSource {
     }
 }
 
-/// Uses the existing AMap gateway for every demo route request. If the test
-/// phone has no network, it falls back to the checked-in OSM/ODbL route so the
-/// hardware demo remains usable without persisting an AMap response in source.
+/// Uses Baidu for demo route requests. If the test phone has no network, it
+/// falls back to the checked-in OSM/ODbL route so the
+/// hardware demo remains usable without persisting a live provider response in source.
 final class DemoNavigationRouteProvider: NavigationRouteProviding, @unchecked Sendable {
-    private let liveProvider: AmapGatewayRouteProvider
+    private let liveProvider: BaiduRouteProvider
     private let session: DemoNavigationSession
 
-    init(liveProvider: AmapGatewayRouteProvider, session: DemoNavigationSession) {
+    init(liveProvider: BaiduRouteProvider, session: DemoNavigationSession) {
         self.liveProvider = liveProvider
         self.session = session
     }
@@ -216,7 +216,7 @@ final class DemoNavigationRouteProvider: NavigationRouteProviding, @unchecked Se
             let route = Self.withStableDemoIdentity(
                 envelope.route,
                 rerouted: request.isReroute,
-                provider: "amap-gateway-demo-live"
+                provider: "baidu-ios-demo-live"
             )
             if shouldMoveAlongResult {
                 await session.install(route: route)

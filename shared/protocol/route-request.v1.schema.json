@@ -24,7 +24,8 @@
       "description": "Client-generated monotonic request identifier. Responses echo this value so stale results can be discarded."
     },
     "route_mode": {
-      "const": "driving"
+      "enum": ["driving", "cycling", "electric_bicycle"],
+      "description": "Driving is a car route reference, not motorcycle-specific routing. Cycling and electric_bicycle use Baidu riding plans."
     },
     "origin": {
       "$ref": "#/$defs/wgs84Point"

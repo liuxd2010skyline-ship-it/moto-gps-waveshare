@@ -5,8 +5,8 @@
 #define MOTO_UI_ROUTE_POINT_CAPACITY 24
 #define MOTO_UI_ROAD_POINT_CAPACITY 192
 #define MOTO_UI_ROAD_POLYLINE_CAPACITY 24
-#define MOTO_UI_BUILDING_POINT_CAPACITY 128
-#define MOTO_UI_BUILDING_FOOTPRINT_CAPACITY 16
+#define MOTO_UI_BUILDING_POINT_CAPACITY 240
+#define MOTO_UI_BUILDING_FOOTPRINT_CAPACITY 48
 #define MOTO_UI_CANVAS_WIDTH 466
 #define MOTO_UI_CANVAS_HEIGHT 466
 
@@ -88,7 +88,15 @@ typedef struct {
     uint8_t first_point_index;
     uint8_t point_count;
     uint8_t building_class;
+    uint32_t material_key; /* Geographic identity, independent of camera motion. */
 } moto_ui_building_span_t;
+
+typedef struct {
+    uint8_t intensity; /* 0..100 */
+    uint8_t speed;
+    uint8_t travel;
+    uint8_t reduce_motion;
+} moto_ui_appearance_t;
 
 typedef struct {
     const char *source_name;
@@ -120,6 +128,14 @@ typedef struct {
     uint8_t online;
     uint8_t has_destination;
     uint8_t route_request_in_flight;
+    uint8_t has_usable_fix;
+    uint8_t gnss_stale;
+    uint8_t off_route;
+    uint8_t has_next_maneuver;
+    uint8_t geometry_matched;
+    uint8_t speed_limit_validated;
+    uint8_t total_distance_valid;
+    uint32_t maneuver_identity;
     /* Geometry identity, used only to distinguish a reroute/map replacement
        from ordinary high-rate heading and position motion. */
     uint32_t route_identity;
@@ -156,6 +172,9 @@ void moto_nav_ui_set_motion_state(const moto_ui_state_t *state);
 void moto_nav_ui_set_phone_connection(
     moto_ui_phone_connection_t connection);
 void moto_nav_ui_set_reduce_motion(uint8_t reduce_motion);
+/** Caller holds the display lock; the geographic layers are never recolored. */
+void moto_nav_ui_set_appearance(const moto_ui_appearance_t *appearance);
+void moto_nav_ui_get_appearance(moto_ui_appearance_t *appearance);
 void moto_nav_ui_set_page(moto_ui_page_t page);
 moto_ui_page_t moto_nav_ui_get_page(void);
 void moto_nav_ui_set_page_change_callback(

@@ -10,7 +10,7 @@
 
 namespace {
 
-NSString *const kMotoBLEErrorDomain = @"org.example.motogps.ble-protocol";
+NSString *const kMotoBLEErrorDomain = @"com.liuxd2010skyline.motogps.ble-protocol";
 
 NSError *ProtocolError(moto::ble::Error error, std::size_t offset = 0) {
   NSString *message = [NSString stringWithFormat:@"BLE v1: %s (offset %zu)",
@@ -246,7 +246,8 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
                         moto::ble::CapabilityTouchCommands |
                         moto::ble::CapabilityMusicCommands |
                         moto::ble::CapabilityCommandAck |
-                        moto::ble::CapabilityMapScene;
+                        moto::ble::CapabilityMapScene |
+                        moto::ble::CapabilityDenseMapScene | moto::ble::CapabilityDisplayPreferences;
   status.session_id = session_id;
   status.max_frame_size =
       static_cast<std::uint16_t>(storage->maximum_frame_size);
@@ -300,6 +301,9 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
   }
   return self;
 }
+@end
+
+@implementation MotoBLEDisplayPreferences
 @end
 
 @implementation MotoBLEMapBuildingInput
@@ -374,6 +378,7 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
 @property(nonatomic, readwrite) BOOL duplicate;
 @property(nonatomic, readwrite, nullable) MotoBLEConnectionStatus *connectionStatus;
 @property(nonatomic, readwrite, nullable) MotoBLEHeartbeat *heartbeat;
+@property(nonatomic, readwrite, nullable) MotoBLEDisplayPreferences *displayPreferences;
 @property(nonatomic, readwrite, nullable) MotoBLEAcknowledgement *acknowledgement;
 @property(nonatomic, readwrite, nullable) MotoBLEDeviceCommand *deviceCommand;
 @end
@@ -431,6 +436,14 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
   const auto status = PhoneConnectionStatus(
       storage, moto::ble::ConnectionState::Starting, sessionID);
   return EncodeMessage(storage, moto::ble::Message{status}, 0, error);
+}
+
+- (NSArray<NSData *> *)encodeDisplayPreferences:(MotoBLEDisplayPreferences *)input error:(NSError **)error {
+  auto *storage=static_cast<CodecStorage *>(_storage);
+  moto::ble::DisplayPreferences p;
+  p.revision=input.revision;p.intensity=input.intensity;p.speed=input.speed;
+  p.travel=input.travel;p.reduce_motion=input.reduceMotion;p.brightness=input.brightness;
+  return EncodeMessage(storage,moto::ble::Message{p},moto::ble::AckRequested,error);
 }
 
 - (NSArray<NSData *> *)encodePhoneReadyWithSessionID:(uint32_t)sessionID
@@ -603,6 +616,12 @@ moto::ble::ConnectionStatus PhoneConnectionStatus(
   }
 
   const auto *command = std::get_if<moto::ble::DeviceCommand>(&decoded.value);
+  if(const auto *p=std::get_if<moto::ble::DisplayPreferences>(&decoded.value)) {
+    MotoBLEDisplayPreferences *value=[[MotoBLEDisplayPreferences alloc] init];
+    value.revision=p->revision;value.intensity=p->intensity;value.speed=p->speed;
+    value.travel=p->travel;value.reduceMotion=p->reduce_motion;value.brightness=p->brightness;
+    inbound.displayPreferences=value;return inbound;
+  }
   if (command == nullptr) return inbound;
 
   MotoBLEDeviceCommand *value = [[MotoBLEDeviceCommand alloc] init];

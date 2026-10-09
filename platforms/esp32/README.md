@@ -2,7 +2,8 @@
 
 # Waveshare ESP32-S3-Touch-AMOLED-1.75C 固件
 
-第一次烧录请看[微雪版 DIY 完整教程](../../docs/WAVESHARE_DIY_GUIDE.md)，
+当前 iPhone + 百度路线版本第一次烧录请看[Windows 到货操作卡](../../docs/WAVESHARE_1_75C_ARRIVAL_CHECKLIST.md)；
+原作者流程保存在[微雪版 DIY 完整教程](../../docs/WAVESHARE_DIY_GUIDE.md)，
 已安装后的操作见[功能说明书](../../docs/USER_MANUAL.md)。
 
 只适用于 **1.75C**：CO5300 QSPI、CST9217、466×466、32 MB Flash、8 MB PSRAM。

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 72" width="72" height="72" role="img" aria-label="ROUNDABOUT navigation arrow">
+  <g fill="currentColor" color="#F5F6F3" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M36 61 V55 C26 55 18 48 18 36 C18 23 27 16 38 16 C49 16 55 23 55 30" stroke-linecap="butt" fill="none" stroke-width="8.6"/>
+    <polygon points="58.000,39.000 55.224,38.892 36.237,29.400 35.717,29.068 35.445,28.603 35.423,28.049 35.651,27.446 36.310,26.982 46.029,25.661 53.620,21.620 60.144,14.296 60.897,14.008 61.524,14.156 61.972,14.484 62.205,14.969 62.190,15.586 59.461,36.636 58.000,39.000"/>
+  </g>
+</svg>

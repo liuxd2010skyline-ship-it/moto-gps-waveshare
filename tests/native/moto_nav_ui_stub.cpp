@@ -35,6 +35,8 @@ extern "C" void moto_nav_ui_set_phone_connection(
     moto_ui_phone_connection_t) {}
 
 extern "C" void moto_nav_ui_set_reduce_motion(uint8_t) {}
+extern "C" void moto_nav_ui_set_appearance(const moto_ui_appearance_t*) {}
+extern "C" void moto_nav_ui_get_appearance(moto_ui_appearance_t* out) { if(out) *out={62,75,85,0}; }
 extern "C" void moto_nav_ui_set_page(moto_ui_page_t) {}
 extern "C" moto_ui_page_t moto_nav_ui_get_page(void) {
   return MOTO_UI_PAGE_NAVIGATION;
