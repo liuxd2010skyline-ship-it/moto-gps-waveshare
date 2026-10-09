@@ -49,13 +49,14 @@ struct BuildingContextFootprintSpan {
 
 struct NavCoreConfig {
   float maximum_usable_accuracy_m = 50.0F;
-  float off_route_threshold_m = 45.0F;
-  float on_route_threshold_m = 25.0F;
-  std::uint8_t off_route_confirmations = 3;
+  float off_route_threshold_m = 30.0F;
+  float on_route_threshold_m = 18.0F;
+  std::uint8_t off_route_confirmations = 2;
+  TimestampMs off_route_confirmation_ms = 1'000;
   float arrival_radius_m = 20.0F;
   std::uint8_t arrival_confirmations = 2;
   TimestampMs gnss_stale_after_ms = 5'000;
-  TimestampMs route_retry_after_ms = 5'000;
+  TimestampMs route_retry_after_ms = 2'000;
   TimestampMs traffic_refresh_interval_ms = 60'000;
   TimestampMs traffic_retry_after_ms = 10'000;
 };
@@ -168,6 +169,7 @@ class NavCore {
   void update_route_view(const Gcj02Point& position,
                          double route_progress_m);
   void update_derived_route_fields();
+  void update_route_heading(const Projection& projection);
   [[nodiscard]] std::uint32_t allocate_request_id() noexcept;
 
   [[nodiscard]] bool valid_point(const Wgs84Point& point) const;
@@ -195,6 +197,8 @@ class NavCore {
   std::uint32_t active_traffic_request_id_ = 0;
   std::uint8_t off_route_count_ = 0;
   std::uint8_t arrival_count_ = 0;
+  TimestampMs off_route_since_ms_ = 0;
+  bool heading_initialized_ = false;
   TimestampMs route_retry_at_ms_ = 0;
   TimestampMs traffic_retry_at_ms_ = 0;
   double eta_reference_remaining_distance_m_ = 0.0;

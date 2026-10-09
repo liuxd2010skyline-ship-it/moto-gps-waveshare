@@ -194,7 +194,7 @@ void test_deviation_hysteresis_and_reroute() {
             GnssFixReceived{fix(far_from_route, 2'100)})
             .empty());
   const NavCommands commands = fixture.core.handle(
-      GnssFixReceived{fix(far_from_route, 2'200)});
+      GnssFixReceived{fix(far_from_route, 3'000)});
   CHECK(fixture.core.snapshot().state == NavState::Rerouting);
   CHECK(fixture.core.snapshot().off_route);
   CHECK(commands.size() == 1);
@@ -459,7 +459,7 @@ void test_missing_heading_preserves_the_last_valid_course() {
   GnssFix missing_heading = fix(kMiddle, 2'000);
   missing_heading.heading_deg = std::numeric_limits<float>::quiet_NaN();
   fixture.core.handle(GnssFixReceived{missing_heading});
-  CHECK(fixture.core.snapshot().heading_deg == 90.0F);
+  CHECK(std::abs(fixture.core.snapshot().heading_deg - 90.0F) < 1.0F);
 }
 
 void test_invalid_fix_channels_do_not_poison_snapshot() {
@@ -554,25 +554,26 @@ void test_stationary_fix_zeroes_speed_and_holds_heading() {
   RunningFixture fixture;
   // Moving fix establishes a trustworthy speed and course.
   CHECK(fixture.core.snapshot().speed_mps == 8.0F);
-  CHECK(fixture.core.snapshot().heading_deg == 90.0F);
+  CHECK(std::abs(fixture.core.snapshot().heading_deg - 90.0F) < 1.0F);
 
   // A parked receiver reports sub-walking speed with random courses: the
   // gauge must drop to zero and the heading must stay on the last course.
   fixture.core.handle(
       GnssFixReceived{GnssFix{kMiddle, 3.0F, 0.3F, 217.0F, 2'000}});
   CHECK(fixture.core.snapshot().speed_mps == 0.0F);
-  CHECK(fixture.core.snapshot().heading_deg == 90.0F);
+  CHECK(std::abs(fixture.core.snapshot().heading_deg - 90.0F) < 1.0F);
 
   fixture.core.handle(
       GnssFixReceived{GnssFix{kMiddle, 3.0F, 0.0F, 5.0F, 3'000}});
   CHECK(fixture.core.snapshot().speed_mps == 0.0F);
-  CHECK(fixture.core.snapshot().heading_deg == 90.0F);
+  CHECK(std::abs(fixture.core.snapshot().heading_deg - 90.0F) < 1.0F);
 
-  // Speeding up again restores live speed and course tracking.
+  // A moving course near the known eastbound road uses that road's stable
+  // tangent; a 30-degree course wobble cannot leave the map leaning right.
   fixture.core.handle(
       GnssFixReceived{GnssFix{kMiddle, 3.0F, 6.0F, 120.0F, 4'000}});
   CHECK(fixture.core.snapshot().speed_mps == 6.0F);
-  CHECK(fixture.core.snapshot().heading_deg == 120.0F);
+  CHECK(std::abs(fixture.core.snapshot().heading_deg - 90.0F) < 1.0F);
 }
 
 void test_stale_location_stream_clears_displayed_speed() {
@@ -588,9 +589,73 @@ void test_stale_location_stream_clears_displayed_speed() {
   CHECK(fixture.core.snapshot().speed_mps == 0.0F);
 }
 
+
+void test_upcoming_turn_is_not_hidden_by_straight_steps() {
+  RunningFixture fixture;
+  auto view = fixture.core.snapshot();
+  CHECK(view.next_maneuver.type == ManeuverType::Right);
+  CHECK(std::abs(view.distance_to_next_maneuver_m - 100.0) < 1.0);
+  fixture.core.handle(GnssFixReceived{fix(kMiddle, 2'000)});
+  view = fixture.core.snapshot();
+  CHECK(view.next_maneuver.type == ManeuverType::Right);
+  CHECK(view.distance_to_next_maneuver_m < 15.0);
+}
+
+void test_route_course_works_at_low_speed_and_holds_when_stopped() {
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  const Wgs84Point a{0.0,0.0}, corner{0.001,0.0}, b{0.001,0.001};
+  NavCore core;
+  core.handle(NetworkChanged{NetworkState::Online});
+  core.handle(BeginNavigation{b});
+  const auto request = core.handle(GnssFixReceived{GnssFix{a,4,0,nan,1'000}});
+  RouteBundle route;
+  route.route_id = "right-turn";
+  route.polyline = {{a.latitude_deg,a.longitude_deg},
+                    {corner.latitude_deg,corner.longitude_deg},
+                    {b.latitude_deg,b.longitude_deg}};
+  core.handle(RouteReady{request[0].request_id,route,1'010});
+  CHECK(std::abs(core.snapshot().heading_deg) < 1.0F);
+  core.handle(GnssFixReceived{GnssFix{{0.0009,0},4,1.0F,233,70'000}});
+  CHECK(std::abs(core.snapshot().heading_deg) < 1.0F);
+  core.handle(GnssFixReceived{GnssFix{{0.001,0.0001},4,1.0F,nan,90'000}});
+  CHECK(std::abs(core.snapshot().heading_deg - 90.0F) < 1.0F);
+  core.handle(GnssFixReceived{GnssFix{{0.001,0.0001},4,0,10,91'000}});
+  CHECK(std::abs(core.snapshot().heading_deg - 90.0F) < 1.0F);
+  // Course in the opposite direction must not be forced to the planned road.
+  core.handle(GnssFixReceived{GnssFix{{0.001,0.0001},4,4,270,92'000}});
+  CHECK(std::abs(core.snapshot().heading_deg - 270.0F) < 1.0F);
+}
+
+void test_noisy_or_duplicate_fixes_do_not_trigger_fast_reroute() {
+  RunningFixture fixture;
+  const Wgs84Point noisy{31.23085,121.4737}; // ~50m off, within 2x a 40m fix.
+  fixture.core.handle(GnssFixReceived{fix(noisy,2'000,40)});
+  fixture.core.handle(GnssFixReceived{fix(noisy,3'000,40)});
+  CHECK(fixture.core.snapshot().state == NavState::Navigating);
+  const Wgs84Point off{31.2314,121.4737};
+  fixture.core.handle(GnssFixReceived{fix(off,4'000)});
+  fixture.core.handle(GnssFixReceived{fix(off,4'000)});
+  CHECK(fixture.core.snapshot().state == NavState::Navigating);
+  const auto request = fixture.core.handle(GnssFixReceived{fix(off,5'000)});
+  CHECK(fixture.core.snapshot().state == NavState::Rerouting);
+  CHECK(request.size() == 1);
+}
+
+void test_off_route_fix_does_not_consume_the_next_turn() {
+  RunningFixture fixture;
+  const double progress = fixture.core.snapshot().route_progress_m;
+  fixture.core.handle(GnssFixReceived{fix({31.2314,121.4756},2'000)});
+  CHECK(fixture.core.snapshot().route_progress_m == progress);
+  CHECK(fixture.core.snapshot().next_maneuver.type == ManeuverType::Right);
+}
+
 }  // namespace
 
 int main() {
+  test_upcoming_turn_is_not_hidden_by_straight_steps();
+  test_route_course_works_at_low_speed_and_holds_when_stopped();
+  test_noisy_or_duplicate_fixes_do_not_trigger_fast_reroute();
+  test_off_route_fix_does_not_consume_the_next_turn();
   test_lifecycle_and_arrival();
   test_offline_planning_resumes_on_network();
   test_deviation_hysteresis_and_reroute();

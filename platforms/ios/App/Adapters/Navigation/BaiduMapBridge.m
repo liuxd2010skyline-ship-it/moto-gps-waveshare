@@ -119,18 +119,20 @@ static NSDictionary *BaiduPoint(CLLocationCoordinate2D point) {
         for (BMKDrivingStep *step in line.steps ?: @[]) {
             if (![step isKindOfClass:BMKDrivingStep.class]) { continue; }
             double stepStart = routeOffset;
-            [steps addObject:@{
-                @"offset": @(routeOffset),
-                @"road": step.roadName ?: @"",
-                @"instruction": step.instruction ?: @""
-            }];
+            NSInteger startIndex = -1;
             for (int i = 0; step.points && i < step.pointsCount; i++) {
                 CLLocationCoordinate2D coordinate = BMKCoordinateForMapPoint(step.points[i]);
                 if (!CLLocationCoordinate2DIsValid(coordinate) ||
                     (coordinate.latitude == 0 && coordinate.longitude == 0)) { continue; }
                 NSDictionary *point = BaiduPoint(coordinate);
                 if (![point isEqual:points.lastObject]) { [points addObject:point]; }
+                if (startIndex < 0) startIndex = (NSInteger)points.count - 1;
             }
+            [steps addObject:@{@"offset": @(stepStart),
+                               @"startIndex": @(startIndex),
+                               @"endIndex": @((NSInteger)points.count - 1),
+                               @"road": step.roadName ?: @"",
+                               @"instruction": step.instruction ?: @""}];
             for (BMKTrafficCondition *condition in step.trafficCondition ?: @[]) {
                 double length = MAX(0, condition.distance);
                 if (length > 0) {
@@ -173,16 +175,20 @@ static NSDictionary *BaiduPoint(CLLocationCoordinate2D point) {
         double routeOffset = 0;
         for (BMKRidingStep *step in line.steps ?: @[]) {
             if (![step isKindOfClass:BMKRidingStep.class]) { continue; }
-            [steps addObject:@{@"offset": @(routeOffset),
-                               @"road": step.name ?: @"",
-                               @"instruction": step.instruction ?: @""}];
+            NSInteger startIndex = -1;
             for (int i = 0; step.points && i < step.pointsCount; i++) {
                 CLLocationCoordinate2D coordinate = BMKCoordinateForMapPoint(step.points[i]);
                 if (!CLLocationCoordinate2DIsValid(coordinate) ||
                     (coordinate.latitude == 0 && coordinate.longitude == 0)) { continue; }
                 NSDictionary *point = BaiduPoint(coordinate);
                 if (![point isEqual:points.lastObject]) { [points addObject:point]; }
+                if (startIndex < 0) startIndex = (NSInteger)points.count - 1;
             }
+            [steps addObject:@{@"offset": @(routeOffset),
+                               @"startIndex": @(startIndex),
+                               @"endIndex": @((NSInteger)points.count - 1),
+                               @"road": step.name ?: @"",
+                               @"instruction": step.instruction ?: @""}];
             routeOffset += MAX(0, step.distance);
         }
         if (points.count < 2 || line.distance <= 0) { continue; }

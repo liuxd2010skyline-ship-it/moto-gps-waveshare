@@ -38,6 +38,8 @@ private struct BaiduPlace: Decodable {
 
 private struct BaiduStep: Decodable {
     let offset: Double
+    let startIndex: Int
+    let endIndex: Int
     let road: String
     let instruction: String
 }
@@ -193,25 +195,14 @@ final class BaiduRouteProvider: NavigationRouteProviding, @unchecked Sendable {
             guard route.points.count >= 2, route.points.allSatisfy(\.isValid),
                   route.distance.isFinite, route.distance > 0, route.duration > 0
             else { return nil }
-            let maneuvers = route.steps.enumerated().compactMap { index, step -> RouteManeuver? in
-                guard step.offset.isFinite, step.offset >= 0, step.offset < route.distance,
-                      !step.instruction.isEmpty
-                else { return nil }
-                return RouteManeuver(
-                    id: UInt32(clamping: index + 1),
-                    type: Self.maneuverType(step.instruction),
-                    routeOffsetM: step.offset,
-                    roadName: step.road,
-                    instruction: step.instruction
-                )
-            }
-            let finalManeuvers = maneuvers + [RouteManeuver(
-                id: UInt32(clamping: route.steps.count + 1),
-                type: .arrive,
-                routeOffsetM: route.distance,
-                roadName: "目的地",
-                instruction: "到达目的地"
-            )]
+            let finalManeuvers = RouteStepGuidance.maneuvers(
+                points: route.points.map(\.gcj02),
+                steps: route.steps.map { RouteGuidanceStep(
+                    startIndex: $0.startIndex, endIndex: $0.endIndex,
+                    instruction: $0.instruction, road: $0.road
+                ) },
+                totalDistanceM: route.distance
+            )
             let traffic = route.traffic.compactMap { segment -> TrafficSegment? in
                 guard segment.start.isFinite, segment.end.isFinite,
                       segment.start >= 0, segment.end > segment.start,
@@ -237,17 +228,6 @@ final class BaiduRouteProvider: NavigationRouteProviding, @unchecked Sendable {
         }
         guard !plans.isEmpty else { throw BaiduNavigationError.invalidResult }
         return plans
-    }
-
-    private static func maneuverType(_ text: String) -> ManeuverType {
-        if text.contains("掉头") || text.contains("调头") { return .uTurnLeft }
-        if text.contains("环岛") { return .roundabout }
-        if text.contains("出口") || text.contains("驶出") { return .exit }
-        if text.contains("靠左") || text.contains("左前") { return .slightLeft }
-        if text.contains("靠右") || text.contains("右前") { return .slightRight }
-        if text.contains("左转") { return .left }
-        if text.contains("右转") { return .right }
-        return .continue
     }
 
     private static func trafficLevel(_ status: Int) -> TrafficLevel {

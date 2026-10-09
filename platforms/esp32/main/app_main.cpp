@@ -15,7 +15,6 @@
 #include "freertos/task.h"
 #include "moto_nav_presenter.hpp"
 #include "moto_nav_ui.h"
-#include "motion_heading_sensor.h"
 #include "phone_nav_bridge.h"
 
 namespace {
@@ -80,12 +79,6 @@ moto::ble::AckStatus receive_phone_message(
 
 void update_phone_link(bool active, void* context) {
   static_cast<PhoneNavBridge*>(context)->on_link_state(active);
-}
-
-void update_motion_heading(float heading_rate_dps, std::uint64_t sample_ms,
-                           void* context) {
-  static_cast<PhoneNavBridge*>(context)->on_imu_sample(heading_rate_dps,
-                                                       sample_ms);
 }
 
 void demo_tick_task(void* context) {
@@ -289,13 +282,8 @@ extern "C" void app_main(void) {
              esp_err_to_name(ble_result));
   }
 
-  static MotionHeadingSensor motion_sensor;
-  const esp_err_t motion_result = motion_sensor.start(update_motion_heading,
-                                                      &phone_bridge);
-  if (motion_result != ESP_OK) {
-    ESP_LOGW(kTag, "QMI8658 heading assist could not start: %s",
-             esp_err_to_name(motion_result));
-  }
+  // Course and route matching are authoritative on the phone. Do not start
+  // the 125 Hz gyro task: device yaw must not rotate the navigation map.
 
   // Demo generation fills the retained snapshot in place, but geometry and
   // LVGL projection still use deeper C++ call frames than a trivial task.
@@ -309,6 +297,6 @@ extern "C" void app_main(void) {
   }
 
   ESP_LOGI(kTag,
-           "iPhone BLE + QMI heading -> NavPresenter -> shared LVGL running");
+           "iPhone travel course -> NavPresenter -> shared LVGL running");
   vTaskDelete(nullptr);
 }

@@ -25,8 +25,17 @@ constexpr double kRouteViewSimplificationToleranceM = 3.0;
 // the displayed speed to zero and hold the last trustworthy heading so a
 // parked bike does not show a spinning compass or a phantom speed.
 constexpr float kStationarySpeedMps = 0.5F;
+constexpr float kReliableCourseSpeedMps = 1.5F;
 
 double radians(double degrees) { return degrees * kPi / 180.0; }
+
+float bearing_deg(const Gcj02Point& from, const Gcj02Point& to) {
+  const double east = std::remainder(to.longitude_deg - from.longitude_deg, 360.0) *
+                      std::cos(radians((from.latitude_deg + to.latitude_deg) * 0.5));
+  const double north = to.latitude_deg - from.latitude_deg;
+  const double bearing = std::atan2(east, north) * 180.0 / kPi;
+  return static_cast<float>(std::fmod(bearing + 360.0, 360.0));
+}
 
 // Use the shortest arc around the globe for local route geometry.
 double wrap_longitude_delta(double delta_deg) {
@@ -224,6 +233,8 @@ void NavCore::reset_session(bool preserve_network) {
   active_traffic_request_id_ = 0;
   off_route_count_ = 0;
   arrival_count_ = 0;
+  off_route_since_ms_ = 0;
+  heading_initialized_ = false;
   route_retry_at_ms_ = 0;
   traffic_retry_at_ms_ = 0;
   eta_reference_remaining_distance_m_ = 0.0;
@@ -232,7 +243,7 @@ void NavCore::reset_session(bool preserve_network) {
 
 void NavCore::accept_fix(const GnssFix& fix, NavCommands& commands) {
   if (last_gnss_fix_wgs84_.has_value() &&
-      fix.timestamp_ms < last_gnss_fix_wgs84_->timestamp_ms) {
+      fix.timestamp_ms <= last_gnss_fix_wgs84_->timestamp_ms) {
     return;
   }
 
@@ -291,6 +302,8 @@ void NavCore::accept_fix(const GnssFix& fix, NavCommands& commands) {
     maximum_route_progress_m = view_.route_progress_m +
                                geometry_allowance_m * route_per_geometry;
   }
+  const auto previous_fix = last_gnss_fix_wgs84_;
+  const auto previous_position = last_match_fix_gcj02_;
   last_gnss_fix_wgs84_ = fix;
   last_match_fix_gcj02_ = match_position;
   view_.has_usable_fix = true;
@@ -305,8 +318,17 @@ void NavCore::accept_fix(const GnssFix& fix, NavCommands& commands) {
     view_.speed_mps = 0.0F;
   } else {
     view_.speed_mps = raw_speed;
-    if (std::isfinite(fix.heading_deg)) {
+    if (raw_speed >= kReliableCourseSpeedMps &&
+        std::isfinite(fix.heading_deg) && fix.heading_deg >= 0.0F &&
+        fix.heading_deg < 360.0F) {
       view_.heading_deg = fix.heading_deg;
+      heading_initialized_ = true;
+    } else if (previous_position && previous_fix &&
+               fix.timestamp_ms - previous_fix->timestamp_ms <= config_.gnss_stale_after_ms &&
+               distance_m(*previous_position, match_position) >=
+                   std::max(5.0F, (previous_fix->accuracy_m + fix.accuracy_m) * 0.75F)) {
+      view_.heading_deg = bearing_deg(*previous_position, match_position);
+      heading_initialized_ = true;
     }
   }
   view_.last_fix_ms = fix.timestamp_ms;
@@ -385,6 +407,7 @@ void NavCore::accept_route(RouteReady event) {
   view_.state = NavState::Navigating;
   off_route_count_ = 0;
   arrival_count_ = 0;
+  off_route_since_ms_ = 0;
   eta_reference_remaining_distance_m_ = route_.total_distance_m;
   eta_reference_duration_s_ = route_.total_duration_s;
   view_.last_traffic_update_ms = event.received_at_ms;
@@ -400,6 +423,7 @@ void NavCore::accept_route(RouteReady event) {
       view_.cross_track_distance_m =
           static_cast<float>(projection.cross_track_m);
       update_route_view(*last_match_fix_gcj02_, view_.route_progress_m);
+      update_route_heading(projection);
     }
   }
   update_derived_route_fields();
@@ -506,12 +530,16 @@ void NavCore::update_route_match(const Gcj02Point& position,
 
   view_.cross_track_distance_m =
       static_cast<float>(projection.cross_track_m);
-  // Progress is monotonic for display and maneuver advancement. A later
-  // map-matcher can replace this policy without changing the public contract.
-  view_.route_progress_m = std::max(
-      view_.route_progress_m,
-      std::clamp(projection.along_route_m, 0.0, route_.total_distance_m));
+  const float off_route_distance = std::max(
+      config_.off_route_threshold_m, view_.horizontal_accuracy_m * 2.0F);
+  // A fix off the route must not consume a junction on a parallel street.
+  if (projection.cross_track_m <= off_route_distance) {
+    view_.route_progress_m = std::max(
+        view_.route_progress_m,
+        std::clamp(projection.along_route_m, 0.0, route_.total_distance_m));
+  }
   update_route_view(position, view_.route_progress_m);
+  update_route_heading(projection);
   update_derived_route_fields();
 
   const double final_distance =
@@ -533,16 +561,52 @@ void NavCore::update_route_match(const Gcj02Point& position,
     return;
   }
 
-  if (projection.cross_track_m > config_.off_route_threshold_m) {
+  if (projection.cross_track_m > off_route_distance) {
+    if (off_route_count_ == 0) off_route_since_ms_ = view_.last_fix_ms;
     off_route_count_ = static_cast<std::uint8_t>(std::min<int>(
         255, static_cast<int>(off_route_count_) + 1));
   } else if (projection.cross_track_m < config_.on_route_threshold_m) {
     off_route_count_ = 0;
+    off_route_since_ms_ = 0;
   }
 
-  if (off_route_count_ >= config_.off_route_confirmations) {
+  if (off_route_count_ >= config_.off_route_confirmations &&
+      view_.last_fix_ms - off_route_since_ms_ >= config_.off_route_confirmation_ms) {
     enter_rerouting(commands);
   }
+}
+
+void NavCore::update_route_heading(const Projection& projection) {
+  if (!projection.valid || route_.polyline.size() < 2 ||
+      cumulative_distance_m_.back() <= 0.0 ||
+      view_.horizontal_accuracy_m > 25.0F ||
+      projection.cross_track_m > std::max(12.0F, view_.horizontal_accuracy_m * 1.5F) ||
+      (heading_initialized_ && view_.speed_mps < kStationarySpeedMps)) return;
+
+  // Use the CURRENT matched segment, not a long look-ahead chord across a
+  // future bend. Every street and building then shares one stable orientation.
+  const double progress = view_.route_progress_m * cumulative_distance_m_.back() /
+                          route_.total_distance_m;
+  const auto upper = std::upper_bound(cumulative_distance_m_.begin(),
+                                       cumulative_distance_m_.end(), progress);
+  std::size_t segment = upper == cumulative_distance_m_.begin() ? 0 :
+      static_cast<std::size_t>(upper - cumulative_distance_m_.begin() - 1);
+  segment = std::min(segment, route_.polyline.size() - 2);
+  while (segment + 1 < route_.polyline.size() &&
+         cumulative_distance_m_[segment + 1] - cumulative_distance_m_[segment] < 0.5) ++segment;
+  if (segment + 1 >= route_.polyline.size()) return;
+  const float route_heading = bearing_deg(route_.polyline[segment], route_.polyline[segment + 1]);
+  const bool reliable_course = last_gnss_fix_wgs84_ &&
+      last_gnss_fix_wgs84_->speed_mps >= kReliableCourseSpeedMps &&
+      std::isfinite(last_gnss_fix_wgs84_->heading_deg) &&
+      last_gnss_fix_wgs84_->heading_deg >= 0.0F &&
+      last_gnss_fix_wgs84_->heading_deg < 360.0F;
+  // Do not force the route's direction on a rider who is actually reversing
+  // or taking another road. No device/handlebar mounting angle enters here.
+  if (reliable_course && std::abs(std::remainder(
+          last_gnss_fix_wgs84_->heading_deg - route_heading, 360.0F)) > 60.0F) return;
+  view_.heading_deg = route_heading;
+  heading_initialized_ = true;
 }
 
 void NavCore::update_route_view(const Gcj02Point& position,
@@ -659,8 +723,15 @@ void NavCore::update_derived_route_fields() {
 
   view_.has_next_maneuver = false;
   view_.distance_to_next_maneuver_m = 0.0;
+  const Maneuver* straight_fallback = nullptr;
   for (const Maneuver& maneuver : route_.maneuvers) {
-    if (maneuver.route_offset_m + 1.0 >= view_.route_progress_m) {
+    const double passed_margin = maneuver.type == ManeuverType::Arrive ? 0.0 :
+        std::clamp(static_cast<double>(view_.horizontal_accuracy_m), 4.0, 10.0);
+    if (maneuver.route_offset_m + passed_margin >= view_.route_progress_m) {
+      if (maneuver.type == ManeuverType::Continue || maneuver.type == ManeuverType::Unknown) {
+        if (!straight_fallback) straight_fallback = &maneuver;
+        continue;
+      }
       view_.has_next_maneuver = true;
       view_.next_maneuver = maneuver;
       view_.distance_to_next_maneuver_m =
@@ -668,6 +739,12 @@ void NavCore::update_derived_route_fields() {
                    maneuver.route_offset_m - view_.route_progress_m);
       break;
     }
+  }
+  if (!view_.has_next_maneuver && straight_fallback) {
+    view_.has_next_maneuver = true;
+    view_.next_maneuver = *straight_fallback;
+    view_.distance_to_next_maneuver_m = std::max(
+        0.0, straight_fallback->route_offset_m - view_.route_progress_m);
   }
 
   view_.traffic_ahead = TrafficLevel::Unknown;
@@ -756,7 +833,15 @@ NavCore::Projection NavCore::project_onto_route(
       route_per_geometry;
 
   double best_distance = std::numeric_limits<double>::infinity();
-  for (std::size_t i = 0; i + 1 < route_.polyline.size(); ++i) {
+  const auto first_end = std::lower_bound(cumulative_distance_m_.begin() + 1,
+                                          cumulative_distance_m_.end(),
+                                          minimum_geometry_progress_m);
+  const std::size_t first_segment = static_cast<std::size_t>(
+      first_end - cumulative_distance_m_.begin() - 1);
+  for (std::size_t i = first_segment; i + 1 < route_.polyline.size(); ++i) {
+    // Bound the search BEFORE trigonometry. Long routes used to evaluate
+    // every segment on every location fix, even outside the progress window.
+    if (cumulative_distance_m_[i] > maximum_geometry_progress_m) break;
     const Gcj02Point& a = route_.polyline[i];
     const Gcj02Point& b = route_.polyline[i + 1];
     const double reference_lat =

@@ -197,6 +197,7 @@ struct Ui {
     lv_obj_t *compass_heading = nullptr;
     lv_obj_t *compass_cardinal = nullptr;
     lv_obj_t *compass_speed = nullptr;
+    lv_obj_t *compass_status = nullptr;
     lv_obj_t *compass_ticks[kCompassTickCount]{};
     lv_point_precise_t compass_tick_points[kCompassTickCount][2]{};
     lv_obj_t *compass_letters[4]{};
@@ -1420,8 +1421,10 @@ void update_compass(const moto_ui_state_t *state) {
     char heading[12];
     std::snprintf(heading, sizeof(heading), "%03u°",
                   static_cast<unsigned>(state->heading_deg));
-    lv_label_set_text(ui.compass_heading, heading);
-    lv_label_set_text(ui.compass_cardinal, cardinal_name(state->heading_deg));
+    const bool fresh_course = state->has_usable_fix && !state->gnss_stale && state->speed_kph >= 2;
+    lv_label_set_text(ui.compass_heading, fresh_course ? heading : "---");
+    lv_label_set_text(ui.compass_cardinal, fresh_course ? cardinal_name(state->heading_deg) : "");
+    lv_label_set_text(ui.compass_status, fresh_course ? "TRAVEL COURSE" : "MOVE TO UPDATE");
     char speed[20];
     std::snprintf(speed, sizeof(speed), "%u km/h",
                   static_cast<unsigned>(state->speed_kph));
@@ -1429,6 +1432,7 @@ void update_compass(const moto_ui_state_t *state) {
 
     const double heading_rad = state->heading_deg * kPi / 180.0;
     for(int i = 0; i < kCompassTickCount; ++i) {
+        lv_obj_set_style_opa(ui.compass_ticks[i], fresh_course ? LV_OPA_COVER : LV_OPA_30, 0);
         const double angle = i * 15.0 * kPi / 180.0 - heading_rad;
         const double inner = px(i % 3 == 0 ? 138.0 : 145.0);
         ui.compass_tick_points[i][0] = {
@@ -1450,7 +1454,7 @@ void update_compass(const moto_ui_state_t *state) {
         const double angle = bearings[i] * kPi / 180.0 - heading_rad;
         const int x = static_cast<int>(px(180.0) + std::sin(angle) * px(112.0));
         const int y = static_cast<int>(px(180.0) - std::cos(angle) * px(112.0));
-        lv_label_set_text(ui.compass_letters[i], letters[i]);
+        lv_label_set_text(ui.compass_letters[i], fresh_course ? letters[i] : "");
         lv_obj_set_pos(ui.compass_letters[i], x - px(14), y - px(10));
         lv_obj_set_style_text_color(ui.compass_letters[i], i == 0 ? kAmber : kQuiet, 0);
     }
@@ -1805,6 +1809,8 @@ void create_compass_page() {
     ui.compass_speed = make_label(page, &lv_font_montserrat_20, kWhite, "72 km/h");
     lv_obj_set_style_text_letter_space(ui.compass_speed, px(1), 0);
     lv_obj_align(ui.compass_speed, LV_ALIGN_CENTER, 0, px(57));
+    ui.compass_status = make_label(page, &lv_font_montserrat_16, kQuiet, "MOVE TO UPDATE");
+    lv_obj_align(ui.compass_status, LV_ALIGN_CENTER, 0, px(87));
 }
 
 void create_music_page() {

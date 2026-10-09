@@ -65,9 +65,17 @@ final class SharedNavigationRuntime {
 
         tickTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
+                try? await Task.sleep(for: .milliseconds(250))
                 guard !Task.isCancelled, let self else { return }
-                self.publish(self.bridge.tick(atMs: Self.nowMs()))
+                let before = self.bridge.snapshot
+                let commands = self.bridge.tick(atMs: Self.nowMs())
+                let after = self.bridge.snapshot
+                // Poll retry/stale deadlines promptly without transmitting
+                // identical maps four times a second while parked.
+                if !commands.isEmpty || before.stateName != after.stateName ||
+                    before.gnssStale != after.gnssStale || before.speedMPS != after.speedMPS {
+                    self.publish(commands)
+                }
             }
         }
         return true

@@ -534,7 +534,7 @@ void test_map_scene_atomically_replaces_roads_and_buildings_at_capacity() {
   CHECK(moto::test::phone_nav_bridge_last_building_footprint_count() == 0);
 }
 
-void test_imu_presentation_preserves_40hz_phase_and_stale_course_is_ignored() {
+void test_device_yaw_cannot_change_navigation_course_or_schedule_frames() {
   moto::test::reset_phone_nav_bridge_probe();
   moto::nav::NavPresenter presenter;
   PhoneNavBridge bridge(presenter);
@@ -557,13 +557,19 @@ void test_imu_presentation_preserves_40hz_phase_and_stale_course_is_ignored() {
     pump(bridge);
   }
   const int motion_frames = moto::test::phone_nav_bridge_apply_count() - before;
-  CHECK(motion_frames == 40);  // resetting the deadline yields only 31
+  CHECK(motion_frames == 0);  // physical mounting/handlebar motion is irrelevant
+  CHECK(moto::test::phone_nav_bridge_last_heading_deg() == 90);
   const auto before_stale = moto::test::phone_nav_bridge_last_heading_deg();
   navigation.heading_cdeg = 27'000;
   navigation.flags |= moto::ble::NavigationGnssStale;
   CHECK(bridge.on_message(make_message(navigation, 2)) == moto::ble::AckStatus::Ok);
   pump(bridge);
   CHECK(moto::test::phone_nav_bridge_last_heading_deg() == before_stale);
+  navigation.heading_cdeg = 18'000;
+  navigation.flags = moto::ble::NavigationHasFix;
+  CHECK(bridge.on_message(make_message(navigation, 3)) == moto::ble::AckStatus::Ok);
+  pump(bridge);
+  CHECK(moto::test::phone_nav_bridge_last_heading_deg() == 180);
 }
 
 void test_map_scene_bounds_reach_presenter_and_revisions_wrap() {
@@ -663,7 +669,7 @@ int main() {
   test_demo_uses_the_production_presenter_path();
   test_ios_demo_token_attaches_context_and_live_route_clears_it();
   test_map_scene_atomically_replaces_roads_and_buildings_at_capacity();
-  test_imu_presentation_preserves_40hz_phase_and_stale_course_is_ignored();
+  test_device_yaw_cannot_change_navigation_course_or_schedule_frames();
   test_map_scene_bounds_reach_presenter_and_revisions_wrap();
 
   if (failures != 0) {

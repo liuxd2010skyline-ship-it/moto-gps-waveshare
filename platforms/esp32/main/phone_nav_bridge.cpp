@@ -346,8 +346,6 @@ void PhoneNavBridge::on_link_state(bool active) {
       geometry_ = {};
       phone_snapshot.has_route_view = false;
       clear_map_context(phone_snapshot);
-      heading_fusion_.reset();
-      last_motion_present_ms_ = 0;
       music_page_enabled_ = false;
       media_state_ = {};
       media_state_.source_name = "iPhone";
@@ -359,29 +357,10 @@ void PhoneNavBridge::on_link_state(bool active) {
   request_render(flags);
 }
 
-void PhoneNavBridge::on_imu_sample(float heading_rate_dps,
-                                   std::uint64_t sample_ms) {
-  bool should_present = false;
-  {
-    const std::lock_guard<std::mutex> lock(state_mutex_);
-    if (demo_active_ ||
-        !heading_fusion_.integrate(heading_rate_dps, sample_ms)) {
-      return;
-    }
-    snapshot_.heading_deg = heading_fusion_.heading_deg();
-    // The QMI8658 runs at 125 Hz. Reproject at the display's unified 40 Hz
-    // cadence; requests still coalesce if one physical refresh runs long.
-    if (sample_ms - last_motion_present_ms_ >= 25 &&
-        (snapshot_.has_route_view ||
-         snapshot_.display_page == moto::nav::DisplayPage::Compass)) {
-      // Preserve the 25 ms phase. Setting this to sample_ms quantizes every
-      // interval to four 8 ms samples (32 ms), silently reducing 40 to 31 Hz.
-      last_motion_present_ms_ +=
-          ((sample_ms - last_motion_present_ms_) / 25U) * 25U;
-      should_present = true;
-    }
-  }
-  if (should_present) present_motion();
+void PhoneNavBridge::on_imu_sample(float, std::uint64_t) {
+  // Navigation is course/route driven. A handlebar-mounted gyro measures the
+  // DISPLAY's motion, not the vehicle's travel direction. Keep the adapter
+  // entry point harmless for old callers, without scheduling any redraw.
 }
 
 void PhoneNavBridge::fill_demo_snapshot(moto::nav::NavSnapshot& output,
@@ -602,20 +581,11 @@ void PhoneNavBridge::consume_navigation(
     // protocol session is usable even if a reordered Ready frame was not
     // observed by this bridge callback.
     ui_phone_connection_ = MOTO_UI_PHONE_ONLINE;
-    // A phone course is absolute while moving; use it as the low-frequency
-    // anchor and preserve the local gyroscope's much faster response between
-    // Core Location updates. At walking/standstill speeds Core Location course
-    // is commonly stale, so MotionHeadingFusion deliberately does not pull the
-    // display back toward it.
     const float phone_speed_mps =
         static_cast<float>(input.speed_deci_kph) / 36.0F;
     const float phone_heading_deg =
         static_cast<float>(input.heading_cdeg) / 100.0F;
-    const bool has_usable_fix = has_flag(
-        input.flags, moto::ble::NavigationHasFix);
-    heading_fusion_.anchor(phone_heading_deg, phone_speed_mps,
-                           has_usable_fix && !has_flag(
-                               input.flags, moto::ble::NavigationGnssStale));
+    const bool has_usable_fix = has_flag(input.flags, moto::ble::NavigationHasFix);
 
     phone_snapshot.state = map_state(input.state);
     phone_snapshot.network = map_network(input.network);
@@ -634,9 +604,10 @@ void PhoneNavBridge::consume_navigation(
     phone_snapshot.has_next_maneuver = has_flag(
         input.flags, moto::ble::NavigationHasNextManeuver);
     phone_snapshot.speed_mps = phone_speed_mps;
-    phone_snapshot.heading_deg = heading_fusion_.initialized()
-                                     ? heading_fusion_.heading_deg()
-                                     : phone_heading_deg;
+    // NavCore already resolves travel course against the current route.
+    // Preserve its result exactly; never blend in physical display yaw.
+    phone_snapshot.heading_deg = phone_snapshot.gnss_stale
+                                     ? phone_snapshot.heading_deg : phone_heading_deg;
     phone_snapshot.horizontal_accuracy_m =
         static_cast<float>(input.accuracy_dm) / 10.0F;
     phone_snapshot.cross_track_distance_m =

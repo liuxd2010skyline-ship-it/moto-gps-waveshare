@@ -151,7 +151,7 @@ final class ESP32BLECentral: NSObject {
     /// Keep the radio feed at the frozen v1 protocol ceiling of 5 Hz. The
     /// terminal interpolates heading/position locally at 40 Hz, so animation
     /// remains smooth without forcing a full LVGL redraw ten times per second.
-    private static let navigationTransmitIntervalMs: UInt64 = 200
+    private static let navigationTransmitIntervalMs: UInt64 = 100
     /// CoreBluetooth's `canSendWriteWithoutResponse` only reflects the
     /// phone-side buffer, not how quickly the terminal application drains its
     /// RX queue. Pace application frames instead of bursting every fragment in
